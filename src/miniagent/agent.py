@@ -17,6 +17,13 @@ from miniagent.context import (
     estimate_messages,
     estimate_tokens,
 )
+from miniagent.dependencies import (
+    DEFAULT_JUDGE_TIMEOUT,
+    DEPS_MODES,
+    DependencyJudge,
+    LayerPlan,
+    plan_layers,
+)
 from miniagent.errors import ProviderError
 from miniagent.guard import PromptGuard
 from miniagent.llm import LLMProvider, LLMResponse, Message, ToolCall
@@ -63,9 +70,16 @@ class Agent:
     session: Session | None = None
     tracer: TraceLogger | None = None
     guard: PromptGuard | None = field(default_factory=PromptGuard)
+    tool_deps: str = "model"  # off | model
+    deps_timeout: float = DEFAULT_JUDGE_TIMEOUT
     messages: list[Message] = field(default_factory=list)
+    _judge: DependencyJudge | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.tool_deps not in DEPS_MODES:
+            raise ValueError(f"未知的 tool_deps：{self.tool_deps}（可选 {' / '.join(DEPS_MODES)}）")
+        if self._judge is None:
+            self._judge = DependencyJudge(self.provider, timeout=self.deps_timeout)
         if not self.messages and self.session is not None:
             self.messages = self.session.messages
         if not self.messages:
@@ -198,16 +212,23 @@ class Agent:
         return RunResult(ok=False, text=message, turns=self.max_turns)
 
     def _run_tools(self, calls: list[ToolCall], turn: int) -> None:
-        """路径规则是硬约束；按计划并发/串行执行，结果一律按原序回填。"""
+        """路径规则是硬约束；model 档再叠加模型依赖边，按拓扑层执行，结果原序回填。"""
         results: list[ToolResult | None] = [None] * len(calls)
         if self.max_tool_workers > 1:
             plan = plan_calls(calls, self.registry.is_read_only)
         else:
             plan = CallPlan(serial=list(range(len(calls))))
 
-        if plan.downgraded:
-            self._trace("schedule", turn=turn, detail=f"mode=off {plan.detail}")
-        self._execute_path_plan(calls, results, plan)
+        layered = self.tool_deps == "model" and self.max_tool_workers > 1 and len(calls) > 1
+        if layered:
+            layer_plan = self._layer_plan(calls, plan)
+            self._trace("schedule", turn=turn, detail=layer_plan.detail())
+            for layer in layer_plan.layers:
+                self._execute_layer(calls, results, layer)
+        else:
+            if plan.downgraded:
+                self._trace("schedule", turn=turn, detail=f"mode=off {plan.detail}")
+            self._execute_path_plan(calls, results, plan)
 
         for index, call in enumerate(calls):
             result = results[index]
@@ -248,6 +269,37 @@ class Agent:
                     name=call.name,
                 )
             )
+
+    def _layer_plan(self, calls: list[ToolCall], plan: CallPlan) -> LayerPlan:
+        """路径屏障直接整轮串行并跳过模型判定；判定层自身异常同样降级。"""
+        if plan.is_barrier:
+            return LayerPlan(
+                layers=[[index] for index in range(len(calls))], reason=plan.reasons[0]
+            )
+        assert self._judge is not None
+        try:
+            return plan_layers(calls, plan, self._judge)
+        except Exception:  # noqa: BLE001 - 判定层任何异常都不能影响本轮执行
+            return LayerPlan(
+                layers=[[index] for index in range(len(calls))], reason="internal_error"
+            )
+
+    def _execute_layer(
+        self, calls: list[ToolCall], results: list[ToolResult | None], layer: list[int]
+    ) -> None:
+        """同层并发、层间串行；写回仍用原调用索引，顺序不受调度影响。"""
+        if len(layer) > 1:
+            with ThreadPoolExecutor(
+                max_workers=min(self.max_tool_workers, len(layer))
+            ) as pool:
+                futures = {
+                    index: pool.submit(self.registry.execute, calls[index]) for index in layer
+                }
+                for index, future in futures.items():
+                    results[index] = future.result()
+            return
+        for index in layer:
+            results[index] = self.registry.execute(calls[index])
 
     def _execute_path_plan(
         self, calls: list[ToolCall], results: list[ToolResult | None], plan: CallPlan
@@ -300,8 +352,6 @@ class Agent:
         hits = self.memory.search(user_input, top_k=self.memory_top_k)
         self._trace("memory_hit", ok=bool(hits), detail=f"hits={len(hits)}")
 
-        if not hits:
-            return ""
         kept = []
         for entry in hits:
             # 旧数据或手工写入也可能带毒：注入前再扫一次

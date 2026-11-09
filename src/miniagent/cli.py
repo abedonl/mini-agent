@@ -10,6 +10,7 @@ from pathlib import Path
 
 from miniagent.agent import Agent, AgentEvent
 from miniagent.config import Config, load_config
+from miniagent.dependencies import DEPS_MODES
 from miniagent.errors import ConfigError, MiniAgentError, ProviderError
 from miniagent.guard import MODES as GUARD_MODES
 from miniagent.guard import PromptGuard
@@ -49,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--prompt-guard",
         choices=GUARD_MODES,
         help="提示词注入防护：off 关闭 / annotate 仅标注（默认）/ block 命中即拦截",
+    )
+    parser.add_argument(
+        "--tool-deps",
+        choices=DEPS_MODES,
+        help="同轮工具依赖判定：off 仅路径调度 / model 叠加小模型判定（默认）",
     )
     parser.add_argument("--config", default="config.toml", help="配置文件路径")
     return parser
@@ -156,6 +162,7 @@ def make_agent(
         session=session,
         tracer=tracer,
         guard=PromptGuard(config.prompt_guard),
+        tool_deps=config.tool_deps,
         on_event=render_event,
     )
 
@@ -282,6 +289,8 @@ def main(argv: list[str] | None = None) -> int:
             config = replace(config, gate_model=args.gate_model)
         if args.prompt_guard:
             config = replace(config, prompt_guard=args.prompt_guard)
+        if args.tool_deps:
+            config = replace(config, tool_deps=args.tool_deps)
 
         session_dir = Path(args.session_dir).expanduser() if args.session_dir else None
         session = (

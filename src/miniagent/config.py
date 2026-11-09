@@ -7,6 +7,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from miniagent.dependencies import DEPS_MODES
 from miniagent.errors import ConfigError
 from miniagent.guard import MODES as GUARD_MODES
 
@@ -32,6 +33,7 @@ class Config:
     memory_top_k: int = 3
     gate_model: str = ""  # 记忆门用的模型名，空 = 与主模型相同
     prompt_guard: str = "annotate"  # off | annotate | block
+    tool_deps: str = "model"  # off | model
 
 
 def load_config(path: str | Path = "config.toml") -> Config:
@@ -124,6 +126,12 @@ def load_config(path: str | Path = "config.toml") -> Config:
             f"未知的 prompt_guard：{prompt_guard}（可选 {' / '.join(GUARD_MODES)}）"
         )
 
+    tool_deps = (
+        os.environ.get("MINIAGENT_TOOL_DEPS") or str(data.get("tool_deps", "model"))
+    ).strip().lower()
+    if tool_deps not in DEPS_MODES:
+        raise ConfigError(f"未知的 tool_deps：{tool_deps}（可选 {' / '.join(DEPS_MODES)}）")
+
     return Config(
         provider=provider,
         base_url=base_url,
@@ -140,6 +148,7 @@ def load_config(path: str | Path = "config.toml") -> Config:
         memory_top_k=memory_top_k,
         gate_model=str(os.environ.get("MINIAGENT_GATE_MODEL") or data.get("gate_model", "")),
         prompt_guard=prompt_guard,
+        tool_deps=tool_deps,
     )
 
 

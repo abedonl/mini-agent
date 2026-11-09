@@ -253,6 +253,7 @@ def make_agent(
     calls: list[str],
     *,
     workers: int = 4,
+    tool_deps: str = "off",
 ) -> tuple[Agent, list]:
     registry = ToolRegistry()
     for tool in tools:
@@ -273,6 +274,7 @@ def make_agent(
         provider=provider,
         registry=registry,
         max_tool_workers=workers,
+        tool_deps=tool_deps,
         on_event=events.append,
     )
     return agent, events

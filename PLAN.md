@@ -38,8 +38,8 @@
 | 岗位能力点 | 项目中的落点 | 证据位置 |
 | --- | --- | --- |
 | 工具调用循环与控制流 | 多轮循环、轮次上限、终止条件、单轮多工具调用 | `agent.py`、`tests/test_agent_loop.py` |
-| 会话与上下文管理 | JSONL 持久化、恢复、token 估算与裁剪、三级压缩（剪枝 / 结构化 / 摘要） | `session.py`、`context.py`、`compress.py`、`tests/test_session.py`、`tests/test_context.py`、`tests/test_compress.py` |
-| 并发 | 同轮多工具按路径依赖调度：读-读并发，读与写重叠降级串行；`run_shell` / 无 path 写整轮串行 | `scheduling.py`、`agent.py` 的 `_run_tools`、`tests/test_scheduling.py` |
+| 会话与上下文管理 | JSONL 持久化、恢复、三级压缩（剪枝 / 结构化 / 摘要） | `session.py`、`context.py`、`compress.py`、`tests/test_session.py`、`tests/test_context.py`、`tests/test_compress.py` |
+| 并发 | 同轮多工具按路径依赖调度：读-读并发，读与写重叠降级串行；`run_shell` / 无 path 写整轮串行；再叠一层小模型依赖边，按拓扑层执行（路径边为硬约束） | `scheduling.py`、`dependencies.py`、`agent.py` 的 `_run_tools`、`tests/test_scheduling.py`、`tests/test_dependencies.py` |
 | 流式输出 | SSE 解析、文本增量渲染、中断安全 | `llm.py`、`cli.py`、`tests/test_streaming.py` |
 | 错误处理与重试 | 错误分类、指数退避、429/5xx/超时、尊重 `Retry-After` | `reliability.py`、`llm.py`、`errors.py`、`tests/test_reliability.py` |
 | 限流与超时 | 请求超时 + 客户端令牌桶（单进程内实现） | `reliability.py`、`config.py` |
@@ -108,7 +108,7 @@
 
 1. **轮次上限**：默认 10 轮，防死循环与 token 爆炸。
 2. **请求超时**：单次模型请求默认 60s 超时，超时按可重试错误处理；不做单轮/整次总预算。
-3. **单轮多工具调用**：模型一次可能返回多个 `tool_calls`，必须全部执行并按原顺序回填；同一轮内读-读可并发，读与写路径重叠（同路径/父子目录）时该读降级串行，写始终串行；`run_shell` 与无 `path` 的写视为全路径屏障，整轮串行，避免竞态。
+3. **单轮多工具调用**：模型一次可能返回多个 `tool_calls`，必须全部执行并按原顺序回填；同一轮内读-读可并发，读与写路径重叠（同路径/父子目录）时该读降级串行，写始终串行；`run_shell` 与无 `path` 的写视为全路径屏障，整轮串行，避免竞态。`--tool-deps model`（默认）时再让模型补语义依赖边，按拓扑层执行；任何判定失败都退回整轮串行。
 4. **错误可回收**：工具失败不终止进程，错误文本作为工具结果回传，让模型自我修正；工具调用不自动重试。
 5. **参数校验**：先校验再执行；坏参数与幻觉工具名都走同一套错误回传。
 6. **过程可见**：每次调用打印工具名 + 参数摘要 + 耗时。
@@ -277,6 +277,7 @@ P0 = 缺了不能投；P1 = 低成本高收益；P2 = 时间富裕再做。
 | `cli.py` | 参数、REPL、斜杠命令、流式渲染、trace 回放、退出码 | 业务决策、工具执行 |
 | `agent.py` | 消息组装、循环、轮次上限、并发调度、事件分发、trace 埋点 | HTTP 细节、渲染 |
 | `scheduling.py` | 路径归一化、读写重叠判定、并发/串行计划 | 工具执行、模型调用 |
+| `dependencies.py` | 小模型依赖边判定、路径硬边合并、拓扑分层与降级 | 工具执行、渲染 |
 | `llm.py` | `LLMProvider` Protocol、OpenAI 兼容实现、SSE 解析、重试与超时 | 会话、工具注册 |
 | `reliability.py` | 错误分类、令牌桶限流、指数退避策略 | HTTP 传输、会话 |
 | `tools/registry.py` | 注册表、Schema 导出、校验、执行包装、只读策略 | 具体工具逻辑 |
@@ -301,10 +302,23 @@ P0 = 缺了不能投；P1 = 低成本高收益；P2 = 时间富裕再做。
 1. **消息格式贴齐 OpenAI 兼容协议**：换模型只改 `base_url + model`，协议差异收敛在 `llm.py`。
 2. **接口用 `typing.Protocol`，不用继承体系**：`Tool`、`LLMProvider` 各一个最小契约，新增实现零侵入。
 3. **Agent 只发事件不打印**：逻辑与 UI 解耦，也是接入 HTTP/SSE 的最低成本前提。
-4. **并发只做"同轮多工具"，不做全异步**：ThreadPoolExecutor + 路径依赖判定（读-读并发、读写重叠降级、`run_shell` 屏障）；理由是可解释、可测试，避免 asyncio 全盘改造。
+4. **并发只做"同轮多工具"，不做全异步**：ThreadPoolExecutor + 路径依赖判定（读-读并发、读写重叠降级、`run_shell` 屏障），再叠一层可选的小模型依赖图；理由是可解释、可测试，避免 asyncio 全盘改造。
 5. **重试只针对模型请求，工具不自动重试**：工具可能有副作用，重试语义由模型判断；这是可靠性设计里最值得讲的一条。
 6. **会话即 JSONL，日志亦 JSONL**：可追加、可 grep、可直接喂给 trace 命令。
 7. **失败可回收，但不自动重试**：工具错误作为 tool 消息回传模型自修正；重试语义交给模型，避免副作用重复执行。
+
+### 4.5 小模型依赖判定层
+
+在路径调度之上叠加的第二层：把同轮调用连成有向图，按拓扑层执行（同层并发、层间串行）。设计边界如下：
+
+- **输入只给摘要**：工具名 + 路径/目标文件 + 命令首行（截断），不给正文与工具输出，一次判定几百 token。
+- **结构化边**：`{"edges": [{"from": 0, "to": 1}]}`，只接受本轮索引内的整数；空文本、越界、非整数一律按失败处理。
+- **路径优先**：路径规则推出的串行边全部保留；模型给的反向边丢弃并计数（`dropped`）；合并后仍有环，整轮串行（`reason=cycle`）。
+- **换来什么**：路径无关但语义相关的调用（先读配置、再按结果写文件）不会被同时执行；路径相同但模型判定有先后时，分层顺序也让结果更符合意图。无依赖时仍保持一整层并发，不牺牲原有的读-读并发。
+- **代价**：每轮多一次小模型往返（`deps_timeout` 默认 2s），并引入判错方向的风险；因此所有失败都倒向串行。
+- **什么时候退化成全串行**：`off` 档；路径屏障（`run_shell` / 无 `path` 的写，跳过判定）；判定超时、请求异常、不可解析、索引越界、空回答；合并后成环；判定层内部异常。全部写入 `schedule` trace 的 `reason`，回放可核对。
+- **成本控制**：判定成功才缓存上一轮，参数摘要相同直接 `cache=hit`；失败不缓存，避免把一次故障固化。
+- **明确的安全取向**：判错成并行是**静默数据错误**，比慢严重；宁可整轮串行，也不赌模型判对。
 
 ---
 
@@ -366,13 +380,12 @@ miniagent/
 │   ├── __main__.py
 │   ├── cli.py
 │   ├── agent.py
+│   ├── dependencies.py
 │   ├── llm.py
 │   ├── reliability.py
 │   ├── config.py
 │   ├── session.py
 │   ├── context.py
-│   ├── compress.py
-│   ├── scheduling.py
 │   ├── logging.py
 │   ├── security.py
 │   ├── errors.py
@@ -386,8 +399,7 @@ miniagent/
     ├── test_agent_loop.py
     ├── test_cli.py
     ├── test_context.py
-    ├── test_compress.py
-    ├── test_scheduling.py
+    ├── test_dependencies.py
     ├── test_logging.py
     ├── test_reliability.py
     ├── test_security.py
@@ -462,7 +474,8 @@ miniagent/
   - 中文事实 → 中文提问可检索（先红后绿的测试）；
   - Mock 脚本确定性覆盖门的两条分支与解析失败、请求失败；
   - 攒批未满不调模型，蒸馏失败 pending 不丢；
-  - 正常中文不误报、典型注入被识别、工具输出标注/拦截、用户输入不被改写、记忆注入不回流。
+  - 正常中文不误报、典型注入被识别、工具输出标注/拦截、用户输入不被改写、记忆注入不回流；
+  - 原有 83 个测试不退化（当前 152 个用例全绿，1 个符号链接用例在受限环境跳过）。
 
 ### M5+：可选增强（不进主线）— P2 ｜ 每项 1–3 天
 

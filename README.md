@@ -29,7 +29,7 @@ model = "deepseek-chat"
 api_key = "sk-..."
 ```
 
-也可以用环境变量覆盖：`MINIAGENT_PROVIDER`、`MINIAGENT_BASE_URL`、`MINIAGENT_MODEL`、`MINIAGENT_API_KEY`（兼容 `OPENAI_API_KEY`）、`MINIAGENT_MAX_CONTEXT_TOKENS`（默认 12000）、`MINIAGENT_MAX_RETRIES`（默认 3，含首次请求）、`MINIAGENT_RATE_LIMIT_RPM`（默认 60，0 表示关闭限流）、`MINIAGENT_LOG_DIR`（trace 目录，默认 `~/.miniagent/logs`）、`MINIAGENT_SOUL_PATH`、`MINIAGENT_MEMORY_DIR`（默认 `~/.miniagent/memory`）、`MINIAGENT_MEMORY_ENABLED`、`MINIAGENT_GATE_MODEL`、`MINIAGENT_MEMORY_BATCH_SIZE`（默认 6）、`MINIAGENT_MEMORY_TOP_K`（默认 3）。
+也可以用环境变量覆盖：`MINIAGENT_PROVIDER`、`MINIAGENT_BASE_URL`、`MINIAGENT_MODEL`、`MINIAGENT_API_KEY`（兼容 `OPENAI_API_KEY`）、`MINIAGENT_MAX_CONTEXT_TOKENS`（默认 12000）、`MINIAGENT_MAX_RETRIES`（默认 3，含首次请求）、`MINIAGENT_RATE_LIMIT_RPM`（默认 60，0 表示关闭限流）、`MINIAGENT_LOG_DIR`（trace 目录，默认 `~/.miniagent/logs`）、`MINIAGENT_SOUL_PATH`、`MINIAGENT_MEMORY_DIR`（默认 `~/.miniagent/memory`）、`MINIAGENT_MEMORY_ENABLED`、`MINIAGENT_GATE_MODEL`、`MINIAGENT_MEMORY_BATCH_SIZE`（默认 6）、`MINIAGENT_MEMORY_TOP_K`（默认 3）、`MINIAGENT_TOOL_DEPS`（默认 `model`，可选 `off`）。
 
 ## 能做什么
 
@@ -117,6 +117,34 @@ max_tool_workers=4: 0.40s   # 3 个读并行（0.2s），写不重叠仍串行�
 max_tool_workers=4: 0.40s   # 读与写同路径：降级为串行（0.2s + 0.2s）
 ```
 
+### 小模型依赖判定（按层执行）
+
+路径调度之上再叠一层：把同轮调用交给模型判定语义依赖，输出有向边，再按拓扑层执行——**同层并发、层间串行**；路径规则始终是硬约束，模型不能推翻。
+
+- **输入只有摘要**：每个调用只给工具名 + 路径/目标文件 + 命令首行（截断），不给参数全文与工具输出，一次判定通常几百 token。
+- **结构化输出**：`{"edges": [{"from": 0, "to": 1}]}` 表示 1 依赖 0；只接受本轮索引范围内的整数，其他一律按失败处理。
+- **合并规则**：路径规则推出的串行边全部保留且优先；模型边只追加。与路径边方向相反的模型边直接丢弃并计入 `dropped`；合并后仍有环则整轮串行（`reason=cycle`）。
+- **失败即降级**：判定超时（默认 2s）、请求异常、输出不可解析、索引越界、空回答，一律整轮串行并记录原因。注意空文本 ≠ 无依赖：显式 `{"edges": []}` 才是合法的“无依赖”，`""` 视为失败。
+- **为什么这么保守**：把有依赖的调用判成并行会产生**静默的数据错误**（读到旧值、写被覆盖），比慢严重得多；所以所有失败都倒向“更慢但安全”的串行。
+- **成本控制**：判定成功时只缓存上一轮，参数摘要完全相同的下一轮直接复用（`cache=hit`），不重复付费；失败不缓存，避免把一次故障固化成串行。
+- **开关**：`--tool-deps off|model`（默认 `model`），或 `MINIAGENT_TOOL_DEPS` / `tool_deps`；`off` 完全退回路径调度，不发判定请求。
+
+**什么时候会退化成全串行**：`off` 档；命中路径屏障（`run_shell`、无 `path` 的写，此时连判定都不发）；判定失败（超时/异常/不可解析/越界/空回答）；合并后出现环；判定层内部异常。每种情况都会写进 `schedule` trace 的 `reason`。
+
+**代价**：每轮多一次小模型往返（受 `deps_timeout` 约束，默认 2s），并引入判错方向的风险；收益是语义相关但路径无关的调用（例如先查配置再按结果改文件）不会再被同时执行。
+
+**实测**（Mock 下 4 个 0.2s 的读，判定注入 50ms 模拟小模型往返）：
+
+```text
+无依赖 {"edges": []}：layers=1 sizes=4，总耗时 0.26s（纯路径 0.21s，差值即判定）
+链式依赖 0→1→2→3 ：layers=4 sizes=1+1+1+1，总耗时 0.86s
+off（纯路径调度）  ：0.21s，无判定请求
+```
+
+```text
+[turn 1] schedule mode=model layers=2 sizes=1+1 edges=1 path_edges=1 model_edges=1 dropped=0 judge_ms=48 cache=miss reason=-
+```
+
 ### 结构化日志与 trace 回放
 
 每次运行都会把固定字段追加到 `~/.miniagent/logs/trace.jsonl`（可用 `MINIAGENT_LOG_DIR` 或 `--log-dir` 改路径）：
@@ -137,10 +165,10 @@ session: 20261109-001933-0a7f34（10 条记录）
 ```
 
 - 字段固定为 `ts / session_id / turn / event / tool / duration_ms / prompt_tokens / completion_tokens / ok / error_code / detail`，一行一个 JSON 对象。
-- 事件覆盖 `run_start / request / response / tool / trim / error / run_end`，以及记忆相关事件 `memory_gate / memory_hit / memory_write` 与注入防护事件 `prompt_guard`；失败轮次带 `error_code`（`provider_error` / `tool_error` / `max_turns` / `memory_distill_failed`）。
+- 事件覆盖 `run_start / request / response / tool / schedule / trim / error / run_end`，以及记忆相关事件 `memory_gate / memory_hit / memory_write` 与注入防护事件 `prompt_guard`；失败轮次带 `error_code`（`provider_error` / `tool_error` / `max_turns` / `memory_distill_failed`）。
 - 记忆门的判定结果写入 `detail`（`search:model`、`skip:model`、`search:parse_failed`、`search:provider_error`），可直接回放统计门准确率。
 - `trim` 的 `detail` 记录压缩链路：`stages=prune+structure from=... to=... saved=...`，兜底时带 `fallback=hard_trim`。
-- `schedule` 的 `detail` 记录本轮调度降级：`mode=off concurrent=2 serial=1 downgraded=1 reason=path_overlap`，回放能直接看出降级依据。
+- `schedule` 的 `detail` 记录本轮调度。`model` 档每轮都写：`mode=model layers=2 sizes=1+1 edges=1 path_edges=1 model_edges=1 dropped=0 judge_ms=48 cache=miss reason=-`，回放能直接看出分层依据（`reason=cycle` / `judge_timeout` 等表示降级为全串行）。`off` 档只在发生路径降级时写：`mode=off concurrent=2 serial=1 downgraded=1 reason=path_overlap`。
 - `prompt_guard` 的 `detail` 形如 `action=annotate hits=ignore_previous` 或 `action=drop hits=zh_ignore`，`tool` 标明来源（工具名 / `memory` / `memory_write`）。
 - **只记元数据**：不写对话正文、工具参数/输出、API 密钥；排查时凭轮次、工具名、耗时与错误码定位。
 - `prompt_tokens` / `completion_tokens` 由 `context.estimate_tokens` 粗略估算，不依赖 tokenizer。
@@ -226,6 +254,7 @@ Agent (agent.py)             多轮循环 / 轮次上限 / 工具调度 / trace 
   |-- context.py              token 估算 / 兜底硬裁（不改历史）
   |-- compress.py             三级压缩流水线：剪枝 / 结构化 / 摘要
   |-- scheduling.py           路径依赖判定：并发 / 降级串行 / 原序
+  |-- dependencies.py         小模型依赖边 + 拓扑分层（路径硬边优先，失败整轮串行）
   `-- logging.py              固定字段 trace / 回放数据源
 ```
 
@@ -247,6 +276,7 @@ Agent (agent.py)             多轮循环 / 轮次上限 / 工具调度 / trace 
 | 工具调用循环与控制流 | `agent.py` | `tests/test_agent_loop.py` |
 | 会话持久化与三级压缩 | `session.py`、`context.py`、`compress.py` | `tests/test_session.py`、`tests/test_context.py`、`tests/test_compress.py` |
 | 并发与顺序回填 | `scheduling.py`、`agent.py` 的 `_run_tools`、`tools/registry.py` | `tests/test_scheduling.py`、`tests/test_reliability.py` |
+| 依赖图分层与降级 | `dependencies.py`、`agent.py` 的 `_layer_plan` / `_execute_layer` | `tests/test_dependencies.py` |
 | 流式输出与中断安全 | `llm.py`、`cli.py` | `tests/test_streaming.py` |
 | 错误分类、重试与限流 | `reliability.py`、`llm.py`、`errors.py` | `tests/test_reliability.py` |
 | 可观测性与 trace 回放 | `logging.py`、`cli.py` 的 `trace_main` | `tests/test_logging.py` |
@@ -307,11 +337,11 @@ for tool in [*builtin_tools(policy), ListDirTool()]:
 ## 测试
 
 ```bash
-uv run pytest        # 83 个用例，全部离线
+uv run pytest        # 152 个用例（1 个符号链接用例在受限环境跳过），全部离线
 uv run ruff check .  # lint
 ```
 
-覆盖：正常调用、坏参数、幻觉工具名、非法 JSON、工具异常、轮次上限、单轮多工具顺序、跨进程会话恢复、会话文件损坏、SSE 解析、流式降级、中断安全、上下文裁剪、错误分类、Retry-After 与指数退避、限流阻塞、只读并发与写串行、按路径降级与路径屏障、trace 字段与脱敏、trace 回放、路径白名单、危险命令拦截、写入大小上限、中文记忆检索、攒批蒸馏与失败保留、记忆门该查/不该查/解析失败/请求失败、soul 优先级与缺失回退、正常中文不误报、典型注入识别、工具输出标注与拦截、用户输入不被改写、记忆蒸馏丢弃注入条目、污染记忆不回流、`prompt_guard` trace 与模式配置校验。
+覆盖：正常调用、坏参数、幻觉工具名、非法 JSON、工具异常、轮次上限、单轮多工具顺序、跨进程会话恢复、会话文件损坏、SSE 解析、流式降级、中断安全、上下文裁剪、错误分类、Retry-After 与指数退避、限流阻塞、只读并发与写串行、按路径降级与路径屏障、依赖边分层与环/超时/越界降级、判定缓存、trace 字段与脱敏、trace 回放、路径白名单、危险命令拦截、写入大小上限、中文记忆检索、攒批蒸馏与失败保留、记忆门该查/不该查/解析失败/请求失败、soul 优先级与缺失回退、正常中文不误报、典型注入识别、工具输出标注与拦截、用户输入不被改写、记忆蒸馏丢弃注入条目、污染记忆不回流、`prompt_guard` trace 与模式配置校验。
 
 CI 配置在 [.github/workflows/ci.yml](.github/workflows/ci.yml)：push / PR 触发，Python 3.11 与 3.12 双版本跑 `ruff check .` 和 `pytest -q`。
 

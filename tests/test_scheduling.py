@@ -106,6 +106,7 @@ def build_agent(
     *,
     workers: int = 4,
     tracer: TraceLogger | None = None,
+    tool_deps: str = "off",
 ) -> Agent:
     registry = ToolRegistry()
     for tool in tools:
@@ -126,6 +127,7 @@ def build_agent(
         registry=registry,
         max_tool_workers=workers,
         tracer=tracer,
+        tool_deps=tool_deps,
     )
 
 
