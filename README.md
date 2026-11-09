@@ -105,12 +105,16 @@ $ MINIAGENT_MAX_CONTEXT_TOKENS=1000 uv run miniagent --mock
 - **错误分类**：429/408/5xx 与超时、连接失败可重试；其他 4xx（参数错误、鉴权失败）立即失败，不做无用重试。
 - **指数退避**：0.5s 起翻倍、带抖动、上限 8s；服务端返回 `Retry-After` 时优先服从。默认最多尝试 3 次（`MINIAGENT_MAX_RETRIES`）。
 - **单进程令牌桶限流**：按 `MINIAGENT_RATE_LIMIT_RPM`（默认 60）平滑放行；预计等待超过 30s 直接报错，不会无声挂住。
-- **只读并发、写串行**：同一轮里 `read_file` 这类只读工具用线程池并发执行，`write_file` / `run_shell` 按原序串行；`tool_start` 先全部发出，`tool_end` 与回填消息仍按原序，模型看到的结果顺序稳定。未知工具按“有副作用”处理。
+- **按路径依赖调度（不再只看读写属性）**：读-读并发；读与写路径重叠时，该读降级串行。重叠判定包含同路径与父子目录（写 `src/` 与读 `src/a.py` 冲突）。比较前把相对路径按 cwd 绝对化、解析符号链接、Windows 下统一大小写，避免同一文件两种写法漏判。
+- **同轮顺序语义**：写按原序串行，降级读也按原序执行，所以“先写后读同一路径”时读一定落在写之后；`tool_start` 先全部发出，`tool_end` 与回填消息仍按原序，模型看到的结果顺序不变。
+- **无法静态判断时的保守策略**：`run_shell` 可以影响任意路径，`path` 缺失的写工具也无法界定作用域，二者都视为全路径屏障——该轮全部串行。只读工具若没有 `path` 且同轮有写，也降级串行。理由是宁可损失并发，也不让无法证明无关的调用竞争。
+- **降级可观测**：发生降级时写 `schedule` trace，例如 `concurrent=2 serial=1 downgraded=1 reason=path_overlap`；reasons 取值 `path_overlap` / `shell_barrier` / `write_barrier` / `unknown_read_scope`。
 - 工具调用**永不自动重试**：避免写文件、跑命令重复产生副作用；失败作为错误文本回传，由模型自行修正。
 
 ```text
-max_tool_workers=1: 0.81s   # 3 个只读 + 1 个写，全部串行
-max_tool_workers=4: 0.40s   # 只读并行（0.2s），写仍串行（0.2s），结果顺序不变
+max_tool_workers=1: 0.80s   # 3 个不同路径的读 + 1 个写，全部串行
+max_tool_workers=4: 0.40s   # 3 个读并行（0.2s），写不重叠仍串行（0.2s），结果顺序不变
+max_tool_workers=4: 0.40s   # 读与写同路径：降级为串行（0.2s + 0.2s）
 ```
 
 ### 结构化日志与 trace 回放
@@ -136,6 +140,7 @@ session: 20261109-001933-0a7f34（10 条记录）
 - 事件覆盖 `run_start / request / response / tool / trim / error / run_end`，以及记忆相关事件 `memory_gate / memory_hit / memory_write` 与注入防护事件 `prompt_guard`；失败轮次带 `error_code`（`provider_error` / `tool_error` / `max_turns` / `memory_distill_failed`）。
 - 记忆门的判定结果写入 `detail`（`search:model`、`skip:model`、`search:parse_failed`、`search:provider_error`），可直接回放统计门准确率。
 - `trim` 的 `detail` 记录压缩链路：`stages=prune+structure from=... to=... saved=...`，兜底时带 `fallback=hard_trim`。
+- `schedule` 的 `detail` 记录本轮调度降级：`mode=off concurrent=2 serial=1 downgraded=1 reason=path_overlap`，回放能直接看出降级依据。
 - `prompt_guard` 的 `detail` 形如 `action=annotate hits=ignore_previous` 或 `action=drop hits=zh_ignore`，`tool` 标明来源（工具名 / `memory` / `memory_write`）。
 - **只记元数据**：不写对话正文、工具参数/输出、API 密钥；排查时凭轮次、工具名、耗时与错误码定位。
 - `prompt_tokens` / `completion_tokens` 由 `context.estimate_tokens` 粗略估算，不依赖 tokenizer。
@@ -220,6 +225,7 @@ Agent (agent.py)             多轮循环 / 轮次上限 / 工具调度 / trace 
   |-- soul.py                 人格文件定位与默认值
   |-- context.py              token 估算 / 兜底硬裁（不改历史）
   |-- compress.py             三级压缩流水线：剪枝 / 结构化 / 摘要
+  |-- scheduling.py           路径依赖判定：并发 / 降级串行 / 原序
   `-- logging.py              固定字段 trace / 回放数据源
 ```
 
@@ -240,7 +246,7 @@ Agent (agent.py)             多轮循环 / 轮次上限 / 工具调度 / trace 
 | --- | --- | --- |
 | 工具调用循环与控制流 | `agent.py` | `tests/test_agent_loop.py` |
 | 会话持久化与三级压缩 | `session.py`、`context.py`、`compress.py` | `tests/test_session.py`、`tests/test_context.py`、`tests/test_compress.py` |
-| 并发与顺序回填 | `agent.py` 的 `_run_tools`、`tools/registry.py` | `tests/test_reliability.py` |
+| 并发与顺序回填 | `scheduling.py`、`agent.py` 的 `_run_tools`、`tools/registry.py` | `tests/test_scheduling.py`、`tests/test_reliability.py` |
 | 流式输出与中断安全 | `llm.py`、`cli.py` | `tests/test_streaming.py` |
 | 错误分类、重试与限流 | `reliability.py`、`llm.py`、`errors.py` | `tests/test_reliability.py` |
 | 可观测性与 trace 回放 | `logging.py`、`cli.py` 的 `trace_main` | `tests/test_logging.py` |
@@ -305,7 +311,7 @@ uv run pytest        # 83 个用例，全部离线
 uv run ruff check .  # lint
 ```
 
-覆盖：正常调用、坏参数、幻觉工具名、非法 JSON、工具异常、轮次上限、单轮多工具顺序、跨进程会话恢复、会话文件损坏、SSE 解析、流式降级、中断安全、上下文裁剪、错误分类、Retry-After 与指数退避、限流阻塞、只读并发与写串行、trace 字段与脱敏、trace 回放、路径白名单、危险命令拦截、写入大小上限、中文记忆检索、攒批蒸馏与失败保留、记忆门该查/不该查/解析失败/请求失败、soul 优先级与缺失回退、正常中文不误报、典型注入识别、工具输出标注与拦截、用户输入不被改写、记忆蒸馏丢弃注入条目、污染记忆不回流、`prompt_guard` trace 与模式配置校验。
+覆盖：正常调用、坏参数、幻觉工具名、非法 JSON、工具异常、轮次上限、单轮多工具顺序、跨进程会话恢复、会话文件损坏、SSE 解析、流式降级、中断安全、上下文裁剪、错误分类、Retry-After 与指数退避、限流阻塞、只读并发与写串行、按路径降级与路径屏障、trace 字段与脱敏、trace 回放、路径白名单、危险命令拦截、写入大小上限、中文记忆检索、攒批蒸馏与失败保留、记忆门该查/不该查/解析失败/请求失败、soul 优先级与缺失回退、正常中文不误报、典型注入识别、工具输出标注与拦截、用户输入不被改写、记忆蒸馏丢弃注入条目、污染记忆不回流、`prompt_guard` trace 与模式配置校验。
 
 CI 配置在 [.github/workflows/ci.yml](.github/workflows/ci.yml)：push / PR 触发，Python 3.11 与 3.12 双版本跑 `ruff check .` 和 `pytest -q`。
 

@@ -39,7 +39,7 @@
 | --- | --- | --- |
 | 工具调用循环与控制流 | 多轮循环、轮次上限、终止条件、单轮多工具调用 | `agent.py`、`tests/test_agent_loop.py` |
 | 会话与上下文管理 | JSONL 持久化、恢复、token 估算与裁剪、三级压缩（剪枝 / 结构化 / 摘要） | `session.py`、`context.py`、`compress.py`、`tests/test_session.py`、`tests/test_context.py`、`tests/test_compress.py` |
-| 并发 | 同轮多工具并发执行（只读并发 / 写操作串行）、结果按序回填 | `agent.py` 的 `_run_tools`、`tests/test_reliability.py` |
+| 并发 | 同轮多工具按路径依赖调度：读-读并发，读与写重叠降级串行；`run_shell` / 无 path 写整轮串行 | `scheduling.py`、`agent.py` 的 `_run_tools`、`tests/test_scheduling.py` |
 | 流式输出 | SSE 解析、文本增量渲染、中断安全 | `llm.py`、`cli.py`、`tests/test_streaming.py` |
 | 错误处理与重试 | 错误分类、指数退避、429/5xx/超时、尊重 `Retry-After` | `reliability.py`、`llm.py`、`errors.py`、`tests/test_reliability.py` |
 | 限流与超时 | 请求超时 + 客户端令牌桶（单进程内实现） | `reliability.py`、`config.py` |
@@ -98,7 +98,7 @@
         逐个校验（名称 / JSON Schema）
               │
               ▼
-        按"只读并发、写操作串行"执行 ──► 结果按原顺序回填 tool 消息
+        按"读-读并发、读写路径重叠降级串行"执行 ──► 结果按原顺序回填 tool 消息
               │
               ▼
         回到"调用模型"（受最大轮次限制）
@@ -108,7 +108,7 @@
 
 1. **轮次上限**：默认 10 轮，防死循环与 token 爆炸。
 2. **请求超时**：单次模型请求默认 60s 超时，超时按可重试错误处理；不做单轮/整次总预算。
-3. **单轮多工具调用**：模型一次可能返回多个 `tool_calls`，必须全部执行并按原顺序回填；只读工具（`read_file`）可并发，写与执行类（`write_file` / `run_shell`）串行，避免竞态。
+3. **单轮多工具调用**：模型一次可能返回多个 `tool_calls`，必须全部执行并按原顺序回填；同一轮内读-读可并发，读与写路径重叠（同路径/父子目录）时该读降级串行，写始终串行；`run_shell` 与无 `path` 的写视为全路径屏障，整轮串行，避免竞态。
 4. **错误可回收**：工具失败不终止进程，错误文本作为工具结果回传，让模型自我修正；工具调用不自动重试。
 5. **参数校验**：先校验再执行；坏参数与幻觉工具名都走同一套错误回传。
 6. **过程可见**：每次调用打印工具名 + 参数摘要 + 耗时。
@@ -161,7 +161,7 @@
 - [x] REPL 多轮对话正常；Mock 下工具调用闭环可复现（真实模型待密钥后补跑）。
 - [x] 会话可保存、恢复；超长历史自动裁剪不报错。
 - [x] 工具接口可扩展：实现 `Tool` 并注册即可，README 有 `list_dir` 示例；本期刻意不新增内置工具。
-- [x] 一次返回多个工具调用时全部执行、顺序正确；只读并发、写串行。
+- [x] 一次返回多个工具调用时全部执行、顺序正确；读-读并发，读写路径重叠时降级串行，`run_shell` 整轮串行。
 - [x] 429 / 超时 / 5xx 触发退避重试，最终失败有明确提示与退出码。
 
 岗位证据型：
@@ -252,13 +252,13 @@ P0 = 缺了不能投；P1 = 低成本高收益；P2 = 时间富裕再做。
                 │  AgentEvent 回调
 ┌───────────────▼─────────────────────────────────────────┐
 │ Agent 层（agent.py）                                    │
-│ 循环控制 / 工具调度（并发+串行）/ 轮次上限 / 事件与 trace │
+│ 循环控制 / 工具调度（scheduling.py）/ 轮次上限 / 事件与 trace │
 └──────┬───────────────────────┬──────────────────────────┘
        │                       │
 ┌──────▼──────────────┐  ┌─────▼───────────────────────────┐
 │ 模型层（llm.py）     │  │ 工具层（tools/registry.py）      │
 │ Provider Protocol    │  │ Tool Protocol / 注册表           │
-│ 流式/重试/超时       │  │ 校验 / 执行 / 并发策略           │
+│ 流式/重试/超时       │  │ 校验 / 执行 / 只读标记           │
 │ reliability.py       │  │ tools/builtin.py                │
 └──────┬──────────────┘  └─────┬───────────────────────────┘
        │                       │
@@ -276,6 +276,7 @@ P0 = 缺了不能投；P1 = 低成本高收益；P2 = 时间富裕再做。
 | --- | --- | --- |
 | `cli.py` | 参数、REPL、斜杠命令、流式渲染、trace 回放、退出码 | 业务决策、工具执行 |
 | `agent.py` | 消息组装、循环、轮次上限、并发调度、事件分发、trace 埋点 | HTTP 细节、渲染 |
+| `scheduling.py` | 路径归一化、读写重叠判定、并发/串行计划 | 工具执行、模型调用 |
 | `llm.py` | `LLMProvider` Protocol、OpenAI 兼容实现、SSE 解析、重试与超时 | 会话、工具注册 |
 | `reliability.py` | 错误分类、令牌桶限流、指数退避策略 | HTTP 传输、会话 |
 | `tools/registry.py` | 注册表、Schema 导出、校验、执行包装、只读策略 | 具体工具逻辑 |
@@ -300,7 +301,7 @@ P0 = 缺了不能投；P1 = 低成本高收益；P2 = 时间富裕再做。
 1. **消息格式贴齐 OpenAI 兼容协议**：换模型只改 `base_url + model`，协议差异收敛在 `llm.py`。
 2. **接口用 `typing.Protocol`，不用继承体系**：`Tool`、`LLMProvider` 各一个最小契约，新增实现零侵入。
 3. **Agent 只发事件不打印**：逻辑与 UI 解耦，也是接入 HTTP/SSE 的最低成本前提。
-4. **并发只做"同轮多工具"，不做全异步**：ThreadPoolExecutor + 只读并发、写串行；理由是可解释、可测试，避免 asyncio 全盘改造。
+4. **并发只做"同轮多工具"，不做全异步**：ThreadPoolExecutor + 路径依赖判定（读-读并发、读写重叠降级、`run_shell` 屏障）；理由是可解释、可测试，避免 asyncio 全盘改造。
 5. **重试只针对模型请求，工具不自动重试**：工具可能有副作用，重试语义由模型判断；这是可靠性设计里最值得讲的一条。
 6. **会话即 JSONL，日志亦 JSONL**：可追加、可 grep、可直接喂给 trace 命令。
 7. **失败可回收，但不自动重试**：工具错误作为 tool 消息回传模型自修正；重试语义交给模型，避免副作用重复执行。
@@ -371,6 +372,7 @@ miniagent/
 │   ├── session.py
 │   ├── context.py
 │   ├── compress.py
+│   ├── scheduling.py
 │   ├── logging.py
 │   ├── security.py
 │   ├── errors.py
@@ -385,6 +387,7 @@ miniagent/
     ├── test_cli.py
     ├── test_context.py
     ├── test_compress.py
+    ├── test_scheduling.py
     ├── test_logging.py
     ├── test_reliability.py
     ├── test_security.py

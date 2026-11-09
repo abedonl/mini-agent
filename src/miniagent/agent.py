@@ -22,6 +22,7 @@ from miniagent.guard import PromptGuard
 from miniagent.llm import LLMProvider, LLMResponse, Message, ToolCall
 from miniagent.logging import TraceLogger
 from miniagent.memory import DISTILL_FAILED, DISTILL_OK, MemoryGate, MemoryStore
+from miniagent.scheduling import CallPlan, plan_calls
 from miniagent.session import Session
 from miniagent.soul import DEFAULT_SOUL
 from miniagent.tools.base import ToolResult
@@ -197,30 +198,16 @@ class Agent:
         return RunResult(ok=False, text=message, turns=self.max_turns)
 
     def _run_tools(self, calls: list[ToolCall], turn: int) -> None:
-        """只读工具并发执行，写/执行类工具按原序串行；结果一律按原序回填。"""
+        """路径规则是硬约束；按计划并发/串行执行，结果一律按原序回填。"""
         results: list[ToolResult | None] = [None] * len(calls)
-        concurrent: list[int] = []
         if self.max_tool_workers > 1:
-            concurrent = [
-                index for index, call in enumerate(calls) if self.registry.is_read_only(call.name)
-            ]
-
-        if len(concurrent) > 1:
-            with ThreadPoolExecutor(
-                max_workers=min(self.max_tool_workers, len(concurrent))
-            ) as pool:
-                futures = {
-                    index: pool.submit(self.registry.execute, calls[index]) for index in concurrent
-                }
-                for index, future in futures.items():
-                    results[index] = future.result()
-            parallel_set = set(concurrent)
-            serial = [index for index in range(len(calls)) if index not in parallel_set]
+            plan = plan_calls(calls, self.registry.is_read_only)
         else:
-            serial = list(range(len(calls)))
+            plan = CallPlan(serial=list(range(len(calls))))
 
-        for index in serial:
-            results[index] = self.registry.execute(calls[index])
+        if plan.downgraded:
+            self._trace("schedule", turn=turn, detail=f"mode=off {plan.detail}")
+        self._execute_path_plan(calls, results, plan)
 
         for index, call in enumerate(calls):
             result = results[index]
@@ -261,6 +248,26 @@ class Agent:
                     name=call.name,
                 )
             )
+
+    def _execute_path_plan(
+        self, calls: list[ToolCall], results: list[ToolResult | None], plan: CallPlan
+    ) -> None:
+        """纯路径调度：可并发的读先并发，其余按原调用顺序串行。"""
+        if len(plan.concurrent) > 1:
+            with ThreadPoolExecutor(
+                max_workers=min(self.max_tool_workers, len(plan.concurrent))
+            ) as pool:
+                futures = {
+                    index: pool.submit(self.registry.execute, calls[index])
+                    for index in plan.concurrent
+                }
+                for index, future in futures.items():
+                    results[index] = future.result()
+        else:
+            for index in plan.concurrent:
+                results[index] = self.registry.execute(calls[index])
+        for index in plan.serial:
+            results[index] = self.registry.execute(calls[index])
 
     def _emit(self, event: AgentEvent) -> None:
         if self.on_event is not None:

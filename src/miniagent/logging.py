@@ -42,7 +42,7 @@ class TraceRecord:
     ts: float
     session_id: str
     turn: int
-    event: str  # run_start | request | response | tool | trim | error | run_end
+    event: str  # run_start | request | response | tool | schedule | trim | error | run_end
     tool: str = ""
     duration_ms: int = 0
     prompt_tokens: int = 0
@@ -157,6 +157,8 @@ def format_record(record: TraceRecord) -> str:
         return f"{head} {tail}"
     if record.event == "prompt_guard":
         return f"{head} {record.tool} {record.detail}"
+    if record.event == "schedule":
+        return f"{head} {record.detail}"
     if record.event in {"memory_gate", "memory_hit"}:
         return f"{head} {record.detail}"
     if record.event.startswith("memory"):
