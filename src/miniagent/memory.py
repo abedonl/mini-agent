@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from miniagent.errors import ProviderError
+from miniagent.guard import PromptGuard
 from miniagent.llm import LLMProvider, Message
 
 MEMORY_KINDS = ("fact", "event")
@@ -146,6 +147,7 @@ class MemoryStore:
         self.view_path = self.directory / "memory.md"
         self.batch_size = max(1, batch_size)
         self.session_id = session_id
+        self.last_dropped: list[str] = []  # 最近一次蒸馏里被丢弃条目的命中规则
 
     # ---------- 读写 ----------
 
@@ -199,8 +201,15 @@ class MemoryStore:
 
     # ---------- 蒸馏 ----------
 
-    def maybe_distill(self, provider: LLMProvider) -> str:
-        """返回 skipped（未到批次）/ ok / failed（pending 原样保留）。"""
+    def maybe_distill(
+        self, provider: LLMProvider, *, guard: PromptGuard | None = None
+    ) -> str:
+        """返回 skipped（未到批次）/ ok / failed（pending 原样保留）。
+
+        记忆会跨会话回流，所以命中注入规则的条目在**写入时**就丢弃；
+        注入路径上还会再扫一次，兜住旧数据与手工编辑。
+        """
+        self.last_dropped = []
         batch = self.pending()
         if len(batch) < self.batch_size:
             return DISTILL_SKIPPED
@@ -219,6 +228,11 @@ class MemoryStore:
             return DISTILL_FAILED
 
         for item in items:
+            if guard is not None and guard.mode != "off":
+                scan = guard.scan(item["text"])
+                if scan.flagged:
+                    self.last_dropped.extend(scan.hits)
+                    continue
             self.add(item["kind"], item["text"])
         self.pending_path.write_text("", encoding="utf-8")
         return DISTILL_OK

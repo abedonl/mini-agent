@@ -46,6 +46,7 @@
 | 可观测性 | 固定字段 JSONL trace、会话回放、不记录正文与密钥 | `logging.py`、`cli.py` 的 `trace_main`、`tests/test_logging.py` |
 | 安全边界 | 路径白名单、危险命令黑名单、写入大小上限 | `security.py`、`tools/builtin.py`、`tests/test_security.py` |
 | 记忆与人格 | soul.md 人格、事实/事件记忆、中文检索、攒批蒸馏、记忆门 | `soul.py`、`memory.py`、`tests/test_memory.py` |
+| 提示词注入防护 | 外部内容来源标注、可配置标注/拦截、记忆写入丢弃与注入复扫、命中进 trace | `guard.py`、`agent.py` 的 `_guard_context`、`tests/test_guard.py` |
 | 接口设计与模块边界 | `Tool` / `LLMProvider` 最小 Protocol、依赖单向、事件模型 | `tools/base.py`、`llm.py`、第 4 节 |
 | 测试与工程习惯 | MockProvider 离线测试、关键分支覆盖、ruff + CI | `tests/`、`.github/workflows/ci.yml` |
 
@@ -450,10 +451,12 @@ miniagent/
 ### M5：记忆与人格 — P0 ｜ 2 天（已完成，Mock 验收）
 
 - **内容**：`soul.md` 人格文件（显式 > 项目 > 用户 > 默认）；事实/事件两类记忆写入 `memory.jsonl`，自动渲染 `memory.md`；攒批蒸馏（失败保留 pending）；重叠二字窗口中文检索；每轮一次记忆门判定，失败倾向放行，结果进 trace。
+- **提示词注入防护**：三处外部内容区别对待——用户输入不拦不改；工具输出默认用 `<<<外部数据 ...>>>` 标注并在命中规则时提示，`block` 模式整段替换；记忆在蒸馏写入时丢弃命中条目、注入前再扫一次。规则只作补充，不引入额外模型审核调用。命中统一进 `prompt_guard` trace。
 - **可验证产出**：
   - 中文事实 → 中文提问可检索（先红后绿的测试）；
   - Mock 脚本确定性覆盖门的两条分支与解析失败、请求失败；
-  - 攒批未满不调模型，蒸馏失败 pending 不丢。
+  - 攒批未满不调模型，蒸馏失败 pending 不丢；
+  - 正常中文不误报、典型注入被识别、工具输出标注/拦截、用户输入不被改写、记忆注入不回流。
 
 ### M5+：可选增强（不进主线）— P2 ｜ 每项 1–3 天
 

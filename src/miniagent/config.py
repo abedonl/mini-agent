@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from miniagent.errors import ConfigError
+from miniagent.guard import MODES as GUARD_MODES
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_MODEL = "gpt-4o-mini"
@@ -30,6 +31,7 @@ class Config:
     memory_batch_size: int = 6  # 攒够多少轮再蒸馏
     memory_top_k: int = 3
     gate_model: str = ""  # 记忆门用的模型名，空 = 与主模型相同
+    prompt_guard: str = "annotate"  # off | annotate | block
 
 
 def load_config(path: str | Path = "config.toml") -> Config:
@@ -114,6 +116,14 @@ def load_config(path: str | Path = "config.toml") -> Config:
     if memory_top_k < 1:
         raise ConfigError("memory_top_k 必须大于 0")
 
+    prompt_guard = (
+        os.environ.get("MINIAGENT_PROMPT_GUARD") or str(data.get("prompt_guard", "annotate"))
+    ).strip().lower()
+    if prompt_guard not in GUARD_MODES:
+        raise ConfigError(
+            f"未知的 prompt_guard：{prompt_guard}（可选 {' / '.join(GUARD_MODES)}）"
+        )
+
     return Config(
         provider=provider,
         base_url=base_url,
@@ -129,6 +139,7 @@ def load_config(path: str | Path = "config.toml") -> Config:
         memory_batch_size=memory_batch_size,
         memory_top_k=memory_top_k,
         gate_model=str(os.environ.get("MINIAGENT_GATE_MODEL") or data.get("gate_model", "")),
+        prompt_guard=prompt_guard,
     )
 
 

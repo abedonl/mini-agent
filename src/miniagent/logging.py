@@ -155,6 +155,8 @@ def format_record(record: TraceRecord) -> str:
         if record.error_code:
             tail += f" code={record.error_code}"
         return f"{head} {tail}"
+    if record.event == "prompt_guard":
+        return f"{head} {record.tool} {record.detail}"
     if record.event in {"memory_gate", "memory_hit"}:
         return f"{head} {record.detail}"
     if record.event.startswith("memory"):

@@ -11,6 +11,8 @@ from pathlib import Path
 from miniagent.agent import Agent, AgentEvent
 from miniagent.config import Config, load_config
 from miniagent.errors import ConfigError, MiniAgentError, ProviderError
+from miniagent.guard import MODES as GUARD_MODES
+from miniagent.guard import PromptGuard
 from miniagent.llm import MockProvider, OpenAICompatProvider, dumps_args
 from miniagent.logging import TraceLogger, format_record
 from miniagent.memory import MemoryStore
@@ -43,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--memory-dir", help="记忆目录，默认 ~/.miniagent/memory")
     parser.add_argument("--no-memory", action="store_true", help="关闭记忆检索与写入")
     parser.add_argument("--gate-model", help="记忆门使用的小模型名，默认与主模型相同")
+    parser.add_argument(
+        "--prompt-guard",
+        choices=GUARD_MODES,
+        help="提示词注入防护：off 关闭 / annotate 仅标注（默认）/ block 命中即拦截",
+    )
     parser.add_argument("--config", default="config.toml", help="配置文件路径")
     return parser
 
@@ -148,6 +155,7 @@ def make_agent(
         memory_top_k=config.memory_top_k,
         session=session,
         tracer=tracer,
+        guard=PromptGuard(config.prompt_guard),
         on_event=render_event,
     )
 
@@ -272,6 +280,8 @@ def main(argv: list[str] | None = None) -> int:
             config = replace(config, memory_enabled=False)
         if args.gate_model:
             config = replace(config, gate_model=args.gate_model)
+        if args.prompt_guard:
+            config = replace(config, prompt_guard=args.prompt_guard)
 
         session_dir = Path(args.session_dir).expanduser() if args.session_dir else None
         session = (
