@@ -24,6 +24,12 @@ class Config:
     request_timeout: float = 60.0
     max_retries: int = 3  # 含首次请求的最大尝试次数
     rate_limit_rpm: float = 60.0  # 每分钟最多模型请求数，0 表示不限流
+    soul_path: str = ""  # 空 = 自动查找 ./soul.md 与 ~/.miniagent/soul.md
+    memory_enabled: bool = True
+    memory_dir: str = ""  # 空 = ~/.miniagent/memory
+    memory_batch_size: int = 6  # 攒够多少轮再蒸馏
+    memory_top_k: int = 3
+    gate_model: str = ""  # 记忆门用的模型名，空 = 与主模型相同
 
 
 def load_config(path: str | Path = "config.toml") -> Config:
@@ -83,6 +89,31 @@ def load_config(path: str | Path = "config.toml") -> Config:
     if rate_limit_rpm < 0:
         raise ConfigError("rate_limit_rpm 不能为负数（0 表示不限流）")
 
+    memory_enabled = _to_bool(
+        os.environ.get("MINIAGENT_MEMORY_ENABLED")
+        if os.environ.get("MINIAGENT_MEMORY_ENABLED") is not None
+        else data.get("memory_enabled", True),
+        "memory_enabled",
+    )
+
+    raw_batch = os.environ.get("MINIAGENT_MEMORY_BATCH_SIZE") or data.get(
+        "memory_batch_size", 6
+    )
+    try:
+        memory_batch_size = int(raw_batch)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"memory_batch_size 必须是整数，当前为 {raw_batch!r}") from exc
+    if memory_batch_size < 1:
+        raise ConfigError("memory_batch_size 必须大于 0")
+
+    raw_top_k = os.environ.get("MINIAGENT_MEMORY_TOP_K") or data.get("memory_top_k", 3)
+    try:
+        memory_top_k = int(raw_top_k)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"memory_top_k 必须是整数，当前为 {raw_top_k!r}") from exc
+    if memory_top_k < 1:
+        raise ConfigError("memory_top_k 必须大于 0")
+
     return Config(
         provider=provider,
         base_url=base_url,
@@ -92,4 +123,21 @@ def load_config(path: str | Path = "config.toml") -> Config:
         max_context_tokens=max_context_tokens,
         max_retries=max_retries,
         rate_limit_rpm=rate_limit_rpm,
+        soul_path=str(os.environ.get("MINIAGENT_SOUL_PATH") or data.get("soul_path", "")),
+        memory_enabled=memory_enabled,
+        memory_dir=str(os.environ.get("MINIAGENT_MEMORY_DIR") or data.get("memory_dir", "")),
+        memory_batch_size=memory_batch_size,
+        memory_top_k=memory_top_k,
+        gate_model=str(os.environ.get("MINIAGENT_GATE_MODEL") or data.get("gate_model", "")),
     )
+
+
+def _to_bool(value: object, key: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigError(f"{key} 必须是布尔值，当前为 {value!r}")

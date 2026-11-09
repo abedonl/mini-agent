@@ -26,6 +26,7 @@ TRACE_FIELDS = (
     "completion_tokens",
     "ok",
     "error_code",
+    "detail",
 )
 
 
@@ -48,6 +49,7 @@ class TraceRecord:
     completion_tokens: int = 0
     ok: bool = True
     error_code: str = ""
+    detail: str = ""  # 结构化补充信息，如记忆门判定结果；不含对话正文
 
     def to_dict(self) -> dict[str, Any]:
         return {name: getattr(self, name) for name in TRACE_FIELDS}
@@ -65,6 +67,7 @@ class TraceRecord:
             completion_tokens=int(data.get("completion_tokens", 0)),
             ok=bool(data.get("ok", True)),
             error_code=str(data.get("error_code", "")),
+            detail=str(data.get("detail", "")),
         )
 
 
@@ -87,6 +90,7 @@ class TraceLogger:
         completion_tokens: int = 0,
         ok: bool = True,
         error_code: str = "",
+        detail: str = "",
     ) -> TraceRecord:
         record = TraceRecord(
             ts=time.time(),
@@ -99,6 +103,7 @@ class TraceLogger:
             completion_tokens=completion_tokens,
             ok=ok,
             error_code=error_code,
+            detail=detail,
         )
         self.directory.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as fp:
@@ -147,6 +152,14 @@ def format_record(record: TraceRecord) -> str:
     if record.event == "run_end":
         status = "ok" if record.ok else "failed"
         tail = f"{status} {record.duration_ms}ms"
+        if record.error_code:
+            tail += f" code={record.error_code}"
+        return f"{head} {tail}"
+    if record.event in {"memory_gate", "memory_hit"}:
+        return f"{head} {record.detail}"
+    if record.event.startswith("memory"):
+        status = "ok" if record.ok else "error"
+        tail = f"{status} {record.detail}".rstrip()
         if record.error_code:
             tail += f" code={record.error_code}"
         return f"{head} {tail}"

@@ -13,8 +13,10 @@ from miniagent.config import Config, load_config
 from miniagent.errors import ConfigError, MiniAgentError, ProviderError
 from miniagent.llm import MockProvider, OpenAICompatProvider, dumps_args
 from miniagent.logging import TraceLogger, format_record
+from miniagent.memory import MemoryStore
 from miniagent.security import PathPolicy
 from miniagent.session import Session
+from miniagent.soul import load_soul
 from miniagent.tools import ToolRegistry, builtin_tools
 
 
@@ -37,6 +39,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="允许读写的目录，可重复；默认只允许当前工作目录",
     )
     parser.add_argument("--log-dir", help="trace 日志目录，默认 ~/.miniagent/logs")
+    parser.add_argument("--soul", help="人格文件路径，默认 ./soul.md 或 ~/.miniagent/soul.md")
+    parser.add_argument("--memory-dir", help="记忆目录，默认 ~/.miniagent/memory")
+    parser.add_argument("--no-memory", action="store_true", help="关闭记忆检索与写入")
+    parser.add_argument("--gate-model", help="记忆门使用的小模型名，默认与主模型相同")
     parser.add_argument("--config", default="config.toml", help="配置文件路径")
     return parser
 
@@ -65,6 +71,20 @@ def build_provider(config: Config, mock: bool):
     return OpenAICompatProvider(
         api_key=config.api_key,
         model=config.model,
+        base_url=config.base_url,
+        timeout=config.request_timeout,
+        max_retries=config.max_retries,
+        rate_limit_rpm=config.rate_limit_rpm,
+    )
+
+
+def build_gate_provider(config: Config, provider, mock: bool):
+    """记忆门与主对话共用 LLMProvider 契约；真实模式下可换更便宜的模型。"""
+    if mock or config.provider == "mock" or not config.gate_model:
+        return provider
+    return OpenAICompatProvider(
+        api_key=config.api_key,
+        model=config.gate_model,
         base_url=config.base_url,
         timeout=config.request_timeout,
         max_retries=config.max_retries,
@@ -106,11 +126,26 @@ def make_agent(
         if session is not None
         else None
     )
+    provider = build_provider(config, mock)
+    soul_text, _ = load_soul(config.soul_path or None)
+    memory = (
+        MemoryStore(
+            Path(config.memory_dir) if config.memory_dir else None,
+            batch_size=config.memory_batch_size,
+            session_id=session.session_id if session else "",
+        )
+        if config.memory_enabled
+        else None
+    )
     return Agent(
-        provider=build_provider(config, mock),
+        provider=provider,
         registry=build_registry(allow_dirs),
         max_turns=config.max_turns,
         max_context_tokens=config.max_context_tokens,
+        soul=soul_text,
+        memory=memory,
+        gate_provider=build_gate_provider(config, provider, mock),
+        memory_top_k=config.memory_top_k,
         session=session,
         tracer=tracer,
         on_event=render_event,
@@ -229,6 +264,14 @@ def main(argv: list[str] | None = None) -> int:
             if args.max_turns < 1:
                 raise ConfigError("--max-turns 必须大于 0")
             config = replace(config, max_turns=args.max_turns)
+        if args.soul:
+            config = replace(config, soul_path=args.soul)
+        if args.memory_dir:
+            config = replace(config, memory_dir=args.memory_dir)
+        if args.no_memory:
+            config = replace(config, memory_enabled=False)
+        if args.gate_model:
+            config = replace(config, gate_model=args.gate_model)
 
         session_dir = Path(args.session_dir).expanduser() if args.session_dir else None
         session = (

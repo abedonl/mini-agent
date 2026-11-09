@@ -45,6 +45,7 @@
 | 限流与超时 | 请求超时 + 客户端令牌桶（单进程内实现） | `reliability.py`、`config.py` |
 | 可观测性 | 固定字段 JSONL trace、会话回放、不记录正文与密钥 | `logging.py`、`cli.py` 的 `trace_main`、`tests/test_logging.py` |
 | 安全边界 | 路径白名单、危险命令黑名单、写入大小上限 | `security.py`、`tools/builtin.py`、`tests/test_security.py` |
+| 记忆与人格 | soul.md 人格、事实/事件记忆、中文检索、攒批蒸馏、记忆门 | `soul.py`、`memory.py`、`tests/test_memory.py` |
 | 接口设计与模块边界 | `Tool` / `LLMProvider` 最小 Protocol、依赖单向、事件模型 | `tools/base.py`、`llm.py`、第 4 节 |
 | 测试与工程习惯 | MockProvider 离线测试、关键分支覆盖、ruff + CI | `tests/`、`.github/workflows/ci.yml` |
 
@@ -116,7 +117,7 @@
 - 消息列表（`system` / `user` / `assistant` / `tool`），每轮结束追加写入 `~/.miniagent/sessions/<id>.jsonl`。
 - 恢复：`--resume <id>` 或 `/resume`。
 - 上下文控制：字符近似估算 token；超阈值时保留 system + 最近 N 轮，更早工具输出截断；摘要压缩留到 P2。
-- 长期记忆不做。
+- 长期记忆：M5 已实现文件式记忆（`memory.jsonl` + `memory.md`）、中文重叠二字窗口检索与记忆门；向量检索不做。
 
 #### D. 可插拔工具与接口
 
@@ -446,7 +447,15 @@ miniagent/
 - **出口**：仓库达到可发给面试官的状态。
 - **取舍**：不做指标大盘、不做文档站、不追覆盖率、不做容器沙箱。
 
-### M5：可选增强（不进主线）— P2 ｜ 每项 1–3 天
+### M5：记忆与人格 — P0 ｜ 2 天（已完成，Mock 验收）
+
+- **内容**：`soul.md` 人格文件（显式 > 项目 > 用户 > 默认）；事实/事件两类记忆写入 `memory.jsonl`，自动渲染 `memory.md`；攒批蒸馏（失败保留 pending）；重叠二字窗口中文检索；每轮一次记忆门判定，失败倾向放行，结果进 trace。
+- **可验证产出**：
+  - 中文事实 → 中文提问可检索（先红后绿的测试）；
+  - Mock 脚本确定性覆盖门的两条分支与解析失败、请求失败；
+  - 攒批未满不调模型，蒸馏失败 pending 不丢。
+
+### M5+：可选增强（不进主线）— P2 ｜ 每项 1–3 天
 
 候选与判断标准：
 

@@ -6,6 +6,7 @@ __pycache__/
 config.toml
 sessions/
 logs/
+memory/
 .miniagent/
 .screenshots/
 dist/

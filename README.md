@@ -4,7 +4,7 @@
 
 不依赖 LangChain 等 agent 框架，核心循环与工具层均为自研，约 1500 行 Python（含测试约 2700 行）。目标是做一个**可读、可控、可扩展**的最小 harness，而不是功能堆砌。
 
-当前进度：**M0–M4 全部完成（Mock 下完整可演示）**：多轮工具循环、会话持久化、上下文裁剪、SSE 流式、重试/限流/工具并发、结构化 trace、路径白名单与 CI。
+当前进度：**M0–M5 完成（Mock 下完整可演示）**：多轮工具循环、会话持久化、上下文裁剪、SSE 流式、重试/限流/工具并发、结构化 trace、路径白名单、CI，以及 soul.md 人格、记忆写入与检索、记忆门。
 
 ## 快速开始
 
@@ -29,7 +29,7 @@ model = "deepseek-chat"
 api_key = "sk-..."
 ```
 
-也可以用环境变量覆盖：`MINIAGENT_PROVIDER`、`MINIAGENT_BASE_URL`、`MINIAGENT_MODEL`、`MINIAGENT_API_KEY`（兼容 `OPENAI_API_KEY`）、`MINIAGENT_MAX_CONTEXT_TOKENS`（默认 12000）、`MINIAGENT_MAX_RETRIES`（默认 3，含首次请求）、`MINIAGENT_RATE_LIMIT_RPM`（默认 60，0 表示关闭限流）、`MINIAGENT_LOG_DIR`（trace 目录，默认 `~/.miniagent/logs`）。
+也可以用环境变量覆盖：`MINIAGENT_PROVIDER`、`MINIAGENT_BASE_URL`、`MINIAGENT_MODEL`、`MINIAGENT_API_KEY`（兼容 `OPENAI_API_KEY`）、`MINIAGENT_MAX_CONTEXT_TOKENS`（默认 12000）、`MINIAGENT_MAX_RETRIES`（默认 3，含首次请求）、`MINIAGENT_RATE_LIMIT_RPM`（默认 60，0 表示关闭限流）、`MINIAGENT_LOG_DIR`（trace 目录，默认 `~/.miniagent/logs`）、`MINIAGENT_SOUL_PATH`、`MINIAGENT_MEMORY_DIR`（默认 `~/.miniagent/memory`）、`MINIAGENT_MEMORY_ENABLED`、`MINIAGENT_GATE_MODEL`、`MINIAGENT_MEMORY_BATCH_SIZE`（默认 6）、`MINIAGENT_MEMORY_TOP_K`（默认 3）。
 
 ## 能做什么
 
@@ -128,10 +128,42 @@ session: 20261109-001933-0a7f34（10 条记录）
 [turn 3] run_end  ok 6ms
 ```
 
-- 字段固定为 `ts / session_id / turn / event / tool / duration_ms / prompt_tokens / completion_tokens / ok / error_code`，一行一个 JSON 对象。
-- 事件覆盖 `run_start / request / response / tool / trim / error / run_end`；失败轮次带 `error_code`（`provider_error` / `tool_error` / `max_turns`）。
+- 字段固定为 `ts / session_id / turn / event / tool / duration_ms / prompt_tokens / completion_tokens / ok / error_code / detail`，一行一个 JSON 对象。
+- 事件覆盖 `run_start / request / response / tool / trim / error / run_end`，以及记忆相关事件 `memory_gate / memory_hit / memory_write`；失败轮次带 `error_code`（`provider_error` / `tool_error` / `max_turns` / `memory_distill_failed`）。
+- 记忆门的判定结果写入 `detail`（`search:model`、`skip:model`、`search:parse_failed`、`search:provider_error`），可直接回放统计门准确率。
 - **只记元数据**：不写对话正文、工具参数/输出、API 密钥；排查时凭轮次、工具名、耗时与错误码定位。
 - `prompt_tokens` / `completion_tokens` 由 `context.estimate_tokens` 粗略估算，不依赖 tokenizer。
+
+### 人格与记忆
+
+**soul.md** 存放人格与行为约束，启动时作为 system prompt 的基础。查找优先级：
+
+1. `--soul PATH` 指定（缺失则回退默认，不报错）
+2. 项目目录 `./soul.md`
+3. 用户目录 `~/.miniagent/soul.md`
+4. 内置默认人格（`soul.py` 的 `DEFAULT_SOUL`）
+
+**memory.md** 是人类可读的记忆视图，由程序生成并维护，不要手改。默认目录 `~/.miniagent/memory/`（`--memory-dir` 或 `MINIAGENT_MEMORY_DIR` 可改）：
+
+| 文件 | 作用 |
+| --- | --- |
+| `memory.jsonl` | 结构化记忆：`kind`（fact / event）、`text`、`created_at`、`session_id` |
+| `memory.md` | 由 `memory.jsonl` 渲染的阅读视图，每次写入后自动刷新 |
+| `pending.jsonl` | 尚未蒸馏的原始轮次；蒸馏失败时原样保留，不丢数据 |
+
+写入采用**攒批蒸馏**：每轮只把 `用户/助手` 追加进 pending，攒够 `memory_batch_size`（默认 6）才发一次模型调用，把对话蒸馏成事实或事件；解析失败或请求失败时 pending 不清空。
+
+**中文检索**不引分词依赖：中文按重叠二字窗口切分（“管理依赖” → 管理 / 理依 / 依赖），英文按整词切分，再用查询词元在记忆文本中的覆盖率排序。既不会把中文查询切成空词元，也不要求整串包含。
+
+**记忆门**在每次用户输入前用一次便宜的模型调用判断“这轮要不要查记忆”，走同一个 `LLMProvider`；真实模式下可用 `--gate-model` / `MINIAGENT_GATE_MODEL` 指定更小的模型。模型异常、返回空或不是 YES/NO 时**一律放行检索**（多查的代价小于漏查）。命中的记忆只注入当次请求的 system 消息，不写回会话历史。
+
+```text
+$ uv run miniagent trace <session_id>
+[turn 0] memory_gate search:model
+[turn 0] memory_hit hits=1
+[turn 0] run_start prompt≈246 tokens
+...
+```
 
 ### 安全边界
 
@@ -152,6 +184,8 @@ Agent (agent.py)             多轮循环 / 轮次上限 / 工具调度 / trace 
   |     `-- builtin.py        read_file / write_file / run_shell
   |           `-- security.py 路径白名单 / 危险命令黑名单
   |-- Session (session.py)    JSONL 追加写入 / 加载 / 列举
+  |-- memory.py               记忆存储 / 中文检索 / 攒批蒸馏 / 记忆门
+  |-- soul.py                 人格文件定位与默认值
   |-- context.py              token 估算 / 裁剪请求视图（不改历史）
   `-- logging.py              固定字段 trace / 回放数据源
 ```
@@ -163,7 +197,9 @@ Agent (agent.py)             多轮循环 / 轮次上限 / 工具调度 / trace 
 - `Message`：`role` / `content` / `tool_calls` / `tool_call_id`，贴齐 OpenAI 兼容协议。
 - `ToolCall`：`id` / `name` / `arguments`（保留原始 JSON 字符串，先校验再解析）。
 - `AgentEvent`：`text` / `text_delta` / `text_end` / `tool_start` / `tool_end` / `context_trimmed` / `error`。
-- `TraceRecord`：`ts` / `session_id` / `turn` / `event` / `tool` / `duration_ms` / `prompt_tokens` / `completion_tokens` / `ok` / `error_code`。
+- `TraceRecord`：`ts` / `session_id` / `turn` / `event` / `tool` / `duration_ms` / `prompt_tokens` / `completion_tokens` / `ok` / `error_code` / `detail`。
+- `MemoryEntry`：`kind`（fact / event）/ `text` / `created_at` / `session_id`。
+- `GateDecision`：`search`（是否检索）/ `reason`（model / parse_failed / provider_error）。
 
 ## 岗位能力映射
 
@@ -176,6 +212,8 @@ Agent (agent.py)             多轮循环 / 轮次上限 / 工具调度 / trace 
 | 错误分类、重试与限流 | `reliability.py`、`llm.py`、`errors.py` | `tests/test_reliability.py` |
 | 可观测性与 trace 回放 | `logging.py`、`cli.py` 的 `trace_main` | `tests/test_logging.py` |
 | 路径白名单与命令黑名单 | `security.py`、`tools/builtin.py` | `tests/test_security.py` |
+| 记忆写入、中文检索与门控 | `memory.py`、`agent.py` 的 `_memory_note` / `_remember` | `tests/test_memory.py` |
+| 人格加载与默认值 | `soul.py`、`agent.py` 的 `default_system_prompt` | `tests/test_memory.py` |
 | 接口设计与模块边界 | `tools/base.py`、`llm.py` 的 Protocol | `tests/test_tools.py` |
 | CLI、配置与退出码 | `cli.py`、`config.py` | `tests/test_cli.py` |
 
@@ -221,6 +259,9 @@ for tool in [*builtin_tools(policy), ListDirTool()]:
 8. **可靠性放在单进程内**：令牌桶与退避都是进程内实现，不引 Redis/MQ；多进程部署时它是下限，需要全局限流再替换 `TokenBucket` 即可，接口不变。
 9. **日志只记元数据**：trace 不写对话正文、工具参数/输出与密钥，换取"可回放又不泄露隐私"；排查粒度到轮次、工具、耗时与错误码。
 10. **安全边界放在工具层**：路径策略由工具构造参数注入，Agent 与 Provider 不感知；新增工具可以按需复用，也可显式选择不挂策略（测试与库调用场景）。
+11. **记忆是文件而不是向量库**：`memory.jsonl` + `memory.md` 可直接阅读、grep 和手工迁移；检索用重叠二字窗口的包含匹配，不引分词/embedding 依赖，代价是语义泛化有限。
+12. **写入攒批、失败保留**：每轮立即蒸馏会放大成本与噪声，也会在失败时丢数据；因此先落 pending，攒够批次再蒸馏，失败原样保留。
+13. **门失败倾向放行**：漏查一次记忆的代价通常高于多查一次；判定异常时宁可注入无关记忆，也不让模型失忆。
 
 ## 测试
 
@@ -229,7 +270,7 @@ uv run pytest        # 83 个用例，全部离线
 uv run ruff check .  # lint
 ```
 
-覆盖：正常调用、坏参数、幻觉工具名、非法 JSON、工具异常、轮次上限、单轮多工具顺序、跨进程会话恢复、会话文件损坏、SSE 解析、流式降级、中断安全、上下文裁剪、错误分类、Retry-After 与指数退避、限流阻塞、只读并发与写串行、trace 字段与脱敏、trace 回放、路径白名单、危险命令拦截、写入大小上限。
+覆盖：正常调用、坏参数、幻觉工具名、非法 JSON、工具异常、轮次上限、单轮多工具顺序、跨进程会话恢复、会话文件损坏、SSE 解析、流式降级、中断安全、上下文裁剪、错误分类、Retry-After 与指数退避、限流阻塞、只读并发与写串行、trace 字段与脱敏、trace 回放、路径白名单、危险命令拦截、写入大小上限、中文记忆检索、攒批蒸馏与失败保留、记忆门该查/不该查/解析失败/请求失败、soul 优先级与缺失回退。
 
 CI 配置在 [.github/workflows/ci.yml](.github/workflows/ci.yml)：push / PR 触发，Python 3.11 与 3.12 双版本跑 `ruff check .` 和 `pytest -q`。
 
@@ -242,8 +283,9 @@ CI 配置在 [.github/workflows/ci.yml](.github/workflows/ci.yml)：push / PR �
 | M2 | 上下文裁剪、SSE 流式输出、中断安全 | 完成（Mock 验收） |
 | M3 | 错误分类、指数退避重试、令牌桶限流、只读工具并发 | 完成（Mock 验收） |
 | M4 | 结构化日志、trace 回放、路径白名单、CI | 完成（Mock 验收） |
+| M5 | soul.md 人格、记忆写入与中文检索、记忆门 | 完成（Mock 验收） |
 
 ## 边界
 
 - `run_shell` 会真实执行命令，仅建议在本机受信环境使用；已有路径白名单、危险命令黑名单与写入上限，但**不是容器沙箱**。
-- 会话文件包含完整对话内容，默认写在用户目录；trace 只含元数据。不要把这两个目录提交到公开仓库。
+- 会话文件包含完整对话内容，默认写在用户目录；trace 只含元数据，但 `memory.jsonl` 与 `pending.jsonl` 由对话蒸馏而来，同样可能含隐私内容。不要把 `sessions/`、`logs/`、`memory/` 提交到公开仓库。
