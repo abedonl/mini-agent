@@ -11,11 +11,11 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 
+from miniagent.compress import compress_messages
 from miniagent.context import (
     DEFAULT_MAX_TOKENS,
     estimate_messages,
     estimate_tokens,
-    trim_messages,
 )
 from miniagent.errors import ProviderError
 from miniagent.guard import PromptGuard
@@ -88,20 +88,31 @@ class Agent:
 
         for turn in range(1, self.max_turns + 1):
             before_tokens = estimate_messages(self.messages)
-            context = trim_messages(self.messages, self.max_context_tokens)
+            compressed = compress_messages(
+                self.messages,
+                self.max_context_tokens,
+                provider=self.provider,
+            )
+            context = compressed.messages
             after_tokens = estimate_messages(context)
-            if len(context) != len(self.messages) or after_tokens < before_tokens:
+            if compressed.stats.changed:
+                level = "+".join(compressed.stats.stages) or compressed.stats.fallback
                 self._emit(
                     AgentEvent(
                         kind="context_trimmed",
                         text=(
                             f"历史过长，本次请求只带 {len(context)}/{len(self.messages)} 条消息"
-                            f"（估算 {before_tokens} -> {after_tokens} tokens）"
+                            f"（估算 {before_tokens} -> {after_tokens} tokens，压缩级别：{level}）"
                         ),
                         turn=turn,
                     )
                 )
-                self._trace("trim", turn=turn, prompt_tokens=after_tokens)
+                self._trace(
+                    "trim",
+                    turn=turn,
+                    prompt_tokens=after_tokens,
+                    detail=compressed.stats.detail(),
+                )
 
             if memory_note:
                 # 只注入本次请求视图，不写回会话；越界历史仍按原策略裁剪

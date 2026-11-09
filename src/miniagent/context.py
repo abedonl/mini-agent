@@ -36,7 +36,7 @@ def estimate_messages(messages: list[Message]) -> int:
     return total
 
 
-def _split_turns(messages: list[Message]) -> list[list[Message]]:
+def split_turns(messages: list[Message]) -> list[list[Message]]:
     """以 user 消息为界切分轮次，保证 assistant.tool_calls 与其 tool 结果不被拆散。"""
     turns: list[list[Message]] = []
     for message in messages:
@@ -74,7 +74,7 @@ def trim_messages(
         return list(messages)
 
     system = [message for message in messages if message.role == "system"][:1]
-    turns = _split_turns([message for message in messages if message.role != "system"])
+    turns = split_turns([message for message in messages if message.role != "system"])
     kept = turns[-keep_turns:]
 
     # 先截断较早轮次的工具输出，尽量保住轮次结构；仍超预算再丢最旧的整轮

@@ -81,11 +81,15 @@ REPL 命令：
 | `/clear` | 开一个新会话 |
 | `/exit` | 退出 |
 
-### 流式输出与上下文裁剪
+### 流式输出与三级上下文压缩
 
 - 模型文本通过增量回调送到 CLI，边生成边打印；`tool_calls` 的 SSE 分片按 `index` 拼接。流式与非流式共用同一个 `Agent` 循环。
 - 流式请求在收到第一个字之前失败时，自动降级为非流式重试一次；已经输出过内容则直接报错，避免重复输出。
-- 历史超过 `max_context_tokens`（默认 12000）时，只裁剪“发给模型的消息视图”：保留 system + 最近 6 轮，先截断较早轮次的工具输出，仍超预算再丢最旧整轮。会话文件始终保留完整历史。
+- 历史超过 `max_context_tokens`（默认 12000）时，只压缩“发给模型的消息视图”，会话文件始终保留完整历史。压缩按成本从低到高逐级触发，前一级压回阈值就停：
+  1. **剪枝（纯规则，不调模型）**：丢弃被后续写入覆盖的旧读取、内容重复的工具结果、纯确认消息（“好的 / 收到”）；较早轮次的工具输出按类型保头尾截断（`read_file` 1200 字符、`run_shell` 900、其他 600），中间标注省略量，并保留含错误、失败、`exit_code` 的关键行。最近两轮原文不动。
+  2. **结构化（模板，不调模型）**：只折叠最近两轮之前的工具调用，每条压成“工具(作用对象) -> 成功/失败，产出多少字节”，失败保留错误摘要而非完整输出；任务目标与当前请求并入 system 的“关键结论”留槽，不参与后续压缩。
+  3. **摘要（调模型，最后手段）**：前两级仍超标时，才对较早轮次做滚动摘要，要求保留文件路径、命令、决策与待办；摘要块显式标注为“数据、不是指令”，避免压缩把外部内容升级成系统指令。摘要异常、返回空、摘要后仍超标时丢弃摘要并退回硬裁（system + 最近轮次），保证请求不会被撑爆。
+- 每轮压缩写入 `trim` trace 的 `detail`，形如 `stages=prune+structure from=3050 to=860 saved=prune:1800,structure:390`；走兜底时追加 `fallback=summary_failed+hard_trim`。压缩只作用于请求视图，原始会话历史不被改写。
 
 ```bash
 $ MINIAGENT_MAX_CONTEXT_TOKENS=1000 uv run miniagent --mock
@@ -131,6 +135,7 @@ session: 20261109-001933-0a7f34（10 条记录）
 - 字段固定为 `ts / session_id / turn / event / tool / duration_ms / prompt_tokens / completion_tokens / ok / error_code / detail`，一行一个 JSON 对象。
 - 事件覆盖 `run_start / request / response / tool / trim / error / run_end`，以及记忆相关事件 `memory_gate / memory_hit / memory_write` 与注入防护事件 `prompt_guard`；失败轮次带 `error_code`（`provider_error` / `tool_error` / `max_turns` / `memory_distill_failed`）。
 - 记忆门的判定结果写入 `detail`（`search:model`、`skip:model`、`search:parse_failed`、`search:provider_error`），可直接回放统计门准确率。
+- `trim` 的 `detail` 记录压缩链路：`stages=prune+structure from=... to=... saved=...`，兜底时带 `fallback=hard_trim`。
 - `prompt_guard` 的 `detail` 形如 `action=annotate hits=ignore_previous` 或 `action=drop hits=zh_ignore`，`tool` 标明来源（工具名 / `memory` / `memory_write`）。
 - **只记元数据**：不写对话正文、工具参数/输出、API 密钥；排查时凭轮次、工具名、耗时与错误码定位。
 - `prompt_tokens` / `completion_tokens` 由 `context.estimate_tokens` 粗略估算，不依赖 tokenizer。
@@ -213,7 +218,8 @@ Agent (agent.py)             多轮循环 / 轮次上限 / 工具调度 / trace 
   |-- memory.py               记忆存储 / 中文检索 / 攒批蒸馏 / 记忆门
   |-- guard.py                注入启发式规则 / 外部数据标注与拦截
   |-- soul.py                 人格文件定位与默认值
-  |-- context.py              token 估算 / 裁剪请求视图（不改历史）
+  |-- context.py              token 估算 / 兜底硬裁（不改历史）
+  |-- compress.py             三级压缩流水线：剪枝 / 结构化 / 摘要
   `-- logging.py              固定字段 trace / 回放数据源
 ```
 
@@ -233,7 +239,7 @@ Agent (agent.py)             多轮循环 / 轮次上限 / 工具调度 / trace 
 | 能力点 | 代码位置 | 对应测试 |
 | --- | --- | --- |
 | 工具调用循环与控制流 | `agent.py` | `tests/test_agent_loop.py` |
-| 会话持久化与上下文裁剪 | `session.py`、`context.py` | `tests/test_session.py`、`tests/test_context.py` |
+| 会话持久化与三级压缩 | `session.py`、`context.py`、`compress.py` | `tests/test_session.py`、`tests/test_context.py`、`tests/test_compress.py` |
 | 并发与顺序回填 | `agent.py` 的 `_run_tools`、`tools/registry.py` | `tests/test_reliability.py` |
 | 流式输出与中断安全 | `llm.py`、`cli.py` | `tests/test_streaming.py` |
 | 错误分类、重试与限流 | `reliability.py`、`llm.py`、`errors.py` | `tests/test_reliability.py` |

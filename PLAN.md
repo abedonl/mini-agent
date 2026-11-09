@@ -38,7 +38,7 @@
 | 岗位能力点 | 项目中的落点 | 证据位置 |
 | --- | --- | --- |
 | 工具调用循环与控制流 | 多轮循环、轮次上限、终止条件、单轮多工具调用 | `agent.py`、`tests/test_agent_loop.py` |
-| 会话与上下文管理 | JSONL 持久化、恢复、token 估算与裁剪 | `session.py`、`context.py`、`tests/test_session.py`、`tests/test_context.py` |
+| 会话与上下文管理 | JSONL 持久化、恢复、token 估算与裁剪、三级压缩（剪枝 / 结构化 / 摘要） | `session.py`、`context.py`、`compress.py`、`tests/test_session.py`、`tests/test_context.py`、`tests/test_compress.py` |
 | 并发 | 同轮多工具并发执行（只读并发 / 写操作串行）、结果按序回填 | `agent.py` 的 `_run_tools`、`tests/test_reliability.py` |
 | 流式输出 | SSE 解析、文本增量渲染、中断安全 | `llm.py`、`cli.py`、`tests/test_streaming.py` |
 | 错误处理与重试 | 错误分类、指数退避、429/5xx/超时、尊重 `Retry-After` | `reliability.py`、`llm.py`、`errors.py`、`tests/test_reliability.py` |
@@ -117,7 +117,7 @@
 
 - 消息列表（`system` / `user` / `assistant` / `tool`），每轮结束追加写入 `~/.miniagent/sessions/<id>.jsonl`。
 - 恢复：`--resume <id>` 或 `/resume`。
-- 上下文控制：字符近似估算 token；超阈值时保留 system + 最近 N 轮，更早工具输出截断；摘要压缩留到 P2。
+- 上下文控制：字符近似估算 token；超阈值时按成本逐级压缩——规则剪枝（失效读取 / 重复结果 / 确认语 / 工具输出保头尾截断）→ 模板折叠工具调用 → 旧轮次滚动摘要；任一级达标即停，摘要失败退回硬裁，压缩链路写入 `trim` trace。
 - 长期记忆：M5 已实现文件式记忆（`memory.jsonl` + `memory.md`）、中文重叠二字窗口检索与记忆门；向量检索不做。
 
 #### D. 可插拔工具与接口
@@ -282,7 +282,8 @@ P0 = 缺了不能投；P1 = 低成本高收益；P2 = 时间富裕再做。
 | `tools/builtin.py` | `read_file` / `write_file` / `run_shell` 三个工具实现 | 跨工具协作 |
 | `security.py` | 路径白名单、危险命令黑名单 | 容器沙箱 |
 | `session.py` | Session/Message 模型、JSONL 读写、恢复 | 裁剪策略 |
-| `context.py` | token 估算、裁剪策略 | 模型调用 |
+| `context.py` | token 估算、兜底硬裁 | 模型调用 |
+| `compress.py` | 三级压缩流水线：剪枝 / 结构化 / 摘要 | 模型调用、业务逻辑 |
 | `logging.py` | 固定字段 JSONL trace、会话回放数据源 | 业务逻辑、正文记录 |
 | `errors.py` | 四类异常 + 用户可读文案 + 退出码映射 | 恢复逻辑 |
 
@@ -369,6 +370,7 @@ miniagent/
 │   ├── config.py
 │   ├── session.py
 │   ├── context.py
+│   ├── compress.py
 │   ├── logging.py
 │   ├── security.py
 │   ├── errors.py
@@ -382,6 +384,7 @@ miniagent/
     ├── test_agent_loop.py
     ├── test_cli.py
     ├── test_context.py
+    ├── test_compress.py
     ├── test_logging.py
     ├── test_reliability.py
     ├── test_security.py
