@@ -1,0 +1,1072 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>miniagent 本地界面</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #161923;
+    --panel-2: #1d2130;
+    --border: #2a3042;
+    --text: #e6e9f2;
+    --muted: #8b93a7;
+    --accent: #6ea8fe;
+    --user: #24406b;
+    --assistant: #1c2233;
+    --ok: #46c48a;
+    --fail: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.55 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  #app {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr) 320px;
+    height: 100vh;
+    overflow: hidden;
+  }
+  button {
+    font: inherit;
+    color: var(--text);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+
+  #sidebar {
+    border-right: 1px solid var(--border);
+    background: var(--panel);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .side-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .side-head h1 { font-size: 15px; margin: 0; letter-spacing: .5px; }
+  #session-list {
+    list-style: none;
+    margin: 0;
+    padding: 8px;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  #session-list li { margin-bottom: 4px; }
+  .session {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    text-align: left;
+    background: transparent;
+    border-color: transparent;
+  }
+  .session.active { background: var(--panel-2); border-color: var(--border); }
+  .session-title {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .session-meta { color: var(--muted); font-size: 12px; }
+
+  #main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+  #main-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  #session-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #trace-toggle { display: none; }
+
+  #settings {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    font-size: 12px;
+  }
+  #settings label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+  }
+  #settings input[type="checkbox"] { accent-color: var(--accent); }
+  #settings input[type="checkbox"]:disabled + span { opacity: .5; }
+  #settings .workdir {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 320px;
+    min-width: 240px;
+    cursor: default;
+  }
+  #settings input[type="text"] {
+    flex: 1;
+    min-width: 120px;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font: inherit;
+  }
+  #settings input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  #workdir-roots { flex-basis: 100%; color: var(--muted); }
+  #settings-hint { margin-left: auto; }
+
+  #messages {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 16px;
+  }
+  .msg { margin-bottom: 14px; display: flex; flex-direction: column; gap: 4px; }
+  .msg-role { font-size: 12px; color: var(--muted); }
+  .msg-body {
+    padding: 9px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .msg.user .msg-body { background: var(--user); align-self: flex-start; }
+  .msg.assistant .msg-body { background: var(--assistant); align-self: flex-start; }
+
+  details.tool {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    padding: 8px 10px;
+    margin-bottom: 14px;
+  }
+  details.tool summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    list-style: none;
+  }
+  details.tool summary::-webkit-details-marker { display: none; }
+  .tool-name { color: var(--accent); font-family: Consolas, monospace; }
+  .tool-badge {
+    font-size: 12px;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0 8px;
+  }
+  .tool-badge.ok { color: var(--ok); border-color: var(--ok); }
+  .tool-badge.fail { color: var(--fail); border-color: var(--fail); }
+  .field-label { color: var(--muted); font-size: 12px; margin: 8px 0 2px; }
+  .tool-args, .tool-result {
+    margin: 0;
+    padding: 8px;
+    background: var(--panel-2);
+    border-radius: 6px;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 240px;
+    overflow: auto;
+  }
+
+  #composer {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+  }
+  #input {
+    flex: 1;
+    resize: none;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font: inherit;
+  }
+  #input:focus { outline: none; border-color: var(--accent); }
+  #send { align-self: flex-end; min-width: 64px; }
+  #status {
+    min-height: 22px;
+    padding: 0 16px 8px;
+    color: var(--muted);
+    font-size: 12px;
+    background: var(--panel);
+  }
+  #status.error { color: var(--fail); }
+
+  #trace-panel {
+    border-left: 1px solid var(--border);
+    background: var(--panel);
+    padding: 12px;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  #trace-panel h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+  #trace-turn { color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .trace-row {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+    font-size: 12px;
+  }
+  .trace-head { display: flex; justify-content: space-between; gap: 8px; }
+  .trace-event { color: var(--accent); font-family: Consolas, monospace; }
+  .trace-meta { color: var(--muted); }
+  .trace-detail { color: var(--muted); margin-top: 2px; }
+  .trace-extra {
+    margin-top: 4px;
+    color: var(--text);
+    font-family: Consolas, monospace;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .muted { color: var(--muted); font-size: 12px; }
+
+  .approval {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 30;
+    padding: 20px;
+  }
+  .approval.hidden { display: none; }
+  .approval-box {
+    width: min(560px, 96vw);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, .5);
+  }
+  .approval-box h3 { margin: 0 0 6px; font-size: 15px; }
+  .approval-box input {
+    width: 100%;
+    margin-top: 10px;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font: inherit;
+  }
+  .approval-box input.hidden { display: none; }
+  .approval-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  #approval-allow { border-color: var(--ok); color: var(--ok); }
+  #approval-deny { border-color: var(--fail); color: var(--fail); }
+
+  @media (max-width: 900px) {
+    #app { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+    #sidebar { border-right: none; border-bottom: 1px solid var(--border); max-height: 160px; }
+    #session-list { display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden; }
+    #session-list li { margin-bottom: 0; flex: 0 0 auto; }
+    .session { min-width: 140px; }
+    #trace-toggle { display: inline-block; }
+    #trace-panel { display: none; position: absolute; right: 0; top: 0; bottom: 0; width: min(340px, 92vw); z-index: 10; box-shadow: -8px 0 24px rgba(0,0,0,.45); }
+    #trace-panel.open { display: block; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="side-head">
+      <h1>miniagent</h1>
+      <button id="new-session" type="button">新建</button>
+    </div>
+    <ul id="session-list"></ul>
+  </aside>
+  <main id="main">
+    <header id="main-head">
+      <div id="session-title">未选择会话</div>
+      <button id="trace-toggle" type="button">Trace</button>
+    </header>
+    <div id="settings">
+      <label><input type="checkbox" id="set-plan-mode"><span>计划模式</span></label>
+      <label><input type="checkbox" id="set-plan-verify"><span>收尾校验（仅计划模式）</span></label>
+      <label><input type="checkbox" id="set-hitl"><span>人工确认</span></label>
+      <label class="workdir">
+        <span>工作目录</span>
+        <input type="text" id="set-workdir" spellcheck="false"
+          placeholder="默认：启动时的 cwd">
+        <button id="set-workdir-apply" type="button">切换</button>
+      </label>
+      <span id="workdir-roots"></span>
+      <span id="settings-hint" class="muted"></span>
+    </div>
+    <div id="messages"></div>
+    <form id="composer">
+      <textarea id="input" rows="2" maxlength="10000"
+        placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+      <button id="send" type="submit">发送</button>
+    </form>
+    <div id="status" role="status"></div>
+  </main>
+  <aside id="trace-panel">
+    <h2>当前轮 trace<span id="trace-turn"></span></h2>
+    <div id="trace-list"></div>
+  </aside>
+</div>
+<div id="approval" class="approval hidden" role="dialog" aria-modal="true">
+  <div class="approval-box">
+    <h3 id="approval-title">工具调用需要确认</h3>
+    <div id="approval-meta" class="muted"></div>
+    <pre id="approval-args" class="tool-args"></pre>
+    <input id="approval-text" type="text" placeholder="补充内容（仅信息不足时需要）">
+    <div class="approval-actions">
+      <button id="approval-deny" type="button">拒绝</button>
+      <button id="approval-allow" type="button">允许</button>
+    </div>
+    <div id="approval-hint" class="muted"></div>
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+
+  var state = { current: null, sessions: [], streaming: false, approval: null, roots: [] };
+  var MAX_MESSAGE_CHARS = 10000;
+
+  function byId(id) { return document.getElementById(id); }
+
+  function clear(node) {
+    while (node.firstChild) { node.removeChild(node.firstChild); }
+  }
+
+  function showStatus(message, kind) {
+    var box = byId('status');
+    box.textContent = message || '';
+    box.className = kind === 'error' ? 'error' : '';
+  }
+
+  function formatTime(ts) {
+    var value = Number(ts);
+    if (!isFinite(value) || value <= 0) { return ''; }
+    var date = new Date(value * 1000);
+    return date.toLocaleString('zh-CN', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+    });
+  }
+
+  function scrollBottom() {
+    var box = byId('messages');
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function describeError(err) {
+    var message = err && err.message ? err.message : String(err);
+    if (message === 'Failed to fetch' || message === 'Load failed' ||
+        message.indexOf('NetworkError') !== -1) {
+      return '连不上本地服务（可能已停止），重新运行 uv run python -m miniagent.web 后再刷新';
+    }
+    return message;
+  }
+
+  async function requestJSON(url, options) {
+    var res = await fetch(url, options);
+    var type = res.headers.get('content-type') || '';
+    var body = null;
+    if (type.indexOf('application/json') !== -1) {
+      try { body = await res.json(); } catch (err) { body = null; }
+    }
+    if (!res.ok) {
+      var message = body && body.error ? body.error : '请求失败（HTTP ' + res.status + '）';
+      throw new Error(message);
+    }
+    return body;
+  }
+
+  // ---- 每会话开关 -------------------------------------------------------
+
+  var SETTINGS = [
+    { key: 'plan_mode', input: 'set-plan-mode' },
+    { key: 'plan_verify', input: 'set-plan-verify' },
+    { key: 'hitl', input: 'set-hitl' }
+  ];
+  var settingsQueue = Promise.resolve();
+
+  function settingsHint() {
+    var hint = state.streaming
+      ? '本轮执行中：改动只对下一条消息生效'
+      : '开关与工作目录按会话保存，刷新后保持';
+    byId('settings-hint').textContent = state.current ? hint : '';
+  }
+
+  function setSettingsEnabled(enabled) {
+    SETTINGS.forEach(function (item) {
+      byId(item.input).disabled = !enabled;
+    });
+    byId('set-workdir').disabled = !enabled;
+    byId('set-workdir-apply').disabled = !enabled;
+  }
+
+  function applySettings(data) {
+    SETTINGS.forEach(function (item) {
+      byId(item.input).checked = !!data && data[item.key] === 'on';
+    });
+    byId('set-workdir').value = data && data.workdir ? data.workdir : '';
+    state.roots = data && Array.isArray(data.roots) ? data.roots : [];
+    byId('workdir-roots').textContent = state.roots.length
+      ? '只能在授权目录内切换：' + state.roots.join('、')
+      : '';
+  }
+
+  async function loadSettings(id) {
+    try {
+      var data = await requestJSON(
+        '/api/sessions/' + encodeURIComponent(id) + '/settings'
+      );
+      if (state.current !== id) { return; }
+      applySettings(data);
+      setSettingsEnabled(true);
+    } catch (err) {
+      if (state.current === id) { showStatus(describeError(err), 'error'); }
+    }
+    settingsHint();
+  }
+
+  function saveSetting(key, value) {
+    var id = state.current;
+    if (!id) { return; }
+    // 串行提交：避免快速连点时后发的请求先返回，把界面覆盖成旧状态
+    settingsQueue = settingsQueue.then(async function () {
+      try {
+        var body = {};
+        body[key] = value;
+        var data = await requestJSON(
+          '/api/sessions/' + encodeURIComponent(id) + '/settings',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          }
+        );
+        if (state.current !== id) { return; }
+        var item = SETTINGS.find(function (entry) { return entry.key === key; });
+        if (item) { byId(item.input).checked = data[key] === 'on'; }
+        showStatus(
+          state.streaming ? '开关已保存，下一条消息生效' : '开关已保存',
+          ''
+        );
+      } catch (err) {
+        if (state.current !== id) { return; }
+        showStatus(describeError(err), 'error');
+        await loadSettings(id);
+      } finally {
+        settingsHint();
+      }
+    });
+  }
+
+  function saveWorkdir() {
+    var id = state.current;
+    if (!id) { return; }
+    var value = byId('set-workdir').value.trim();
+    if (!value) {
+      showStatus('工作目录不能为空', 'error');
+      return;
+    }
+    settingsQueue = settingsQueue.then(async function () {
+      try {
+        var data = await requestJSON(
+          '/api/sessions/' + encodeURIComponent(id) + '/settings',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workdir: value })
+          }
+        );
+        if (state.current !== id) { return; }
+        applySettings(data);
+        showStatus(
+          state.streaming ? '工作目录已保存，下一条消息生效' : '工作目录已切换',
+          ''
+        );
+      } catch (err) {
+        if (state.current !== id) { return; }
+        showStatus(describeError(err), 'error');
+        await loadSettings(id);
+      } finally {
+        settingsHint();
+      }
+    });
+  }
+
+  // ---- 会话列表 ---------------------------------------------------------
+  async function loadSessions() {
+    var list;
+    try {
+      list = await requestJSON('/api/sessions');
+    } catch (err) {
+      showStatus(describeError(err), 'error');
+      return;
+    }
+    state.sessions = Array.isArray(list) ? list : [];
+    renderSessions();
+    if (!state.current && state.sessions.length) {
+      await selectSession(state.sessions[0].id);
+    } else if (!state.current) {
+      setSettingsEnabled(false);
+      settingsHint();
+    }
+  }
+
+  function renderSessions() {
+    var ul = byId('session-list');
+    clear(ul);
+    if (!state.sessions.length) {
+      var empty = document.createElement('li');
+      var text = document.createElement('span');
+      text.className = 'muted';
+      text.textContent = '还没有会话';
+      empty.appendChild(text);
+      ul.appendChild(empty);
+      return;
+    }
+    state.sessions.forEach(function (item) {
+      var li = document.createElement('li');
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'session' + (item.id === state.current ? ' active' : '');
+      var title = document.createElement('span');
+      title.className = 'session-title';
+      title.textContent = item.title || '（空会话）';
+      var meta = document.createElement('span');
+      meta.className = 'session-meta';
+      meta.textContent = item.message_count + ' 条 · ' + formatTime(item.updated_at);
+      button.appendChild(title);
+      button.appendChild(meta);
+      button.addEventListener('click', function () { selectSession(item.id); });
+      li.appendChild(button);
+      ul.appendChild(li);
+    });
+  }
+
+  async function selectSession(id) {
+    state.current = id;
+    var found = state.sessions.find(function (item) { return item.id === id; });
+    byId('session-title').textContent = found && found.title ? found.title : id;
+    clear(byId('messages'));
+    clear(byId('trace-list'));
+    byId('trace-turn').textContent = '';
+    renderSessions();
+    await loadMessages(id);
+    await loadTrace(id, null);
+    await loadSettings(id);
+  }
+
+  // ---- 消息渲染 ---------------------------------------------------------
+
+  async function loadMessages(id) {
+    var data;
+    try {
+      data = await requestJSON('/api/sessions/' + encodeURIComponent(id));
+    } catch (err) {
+      showStatus(describeError(err), 'error');
+      return;
+    }
+    if (state.current !== id) { return; }
+    renderMessages(data && data.messages ? data.messages : []);
+  }
+
+  function createBubble(role) {
+    var wrap = document.createElement('div');
+    wrap.className = 'msg ' + role;
+    var head = document.createElement('div');
+    head.className = 'msg-role';
+    head.textContent = role === 'user' ? '你' : '助手';
+    var body = document.createElement('div');
+    body.className = 'msg-body';
+    wrap.appendChild(head);
+    wrap.appendChild(body);
+    byId('messages').appendChild(wrap);
+    scrollBottom();
+    return { el: wrap, body: body };
+  }
+
+  function createToolBlock(name, args) {
+    var details = document.createElement('details');
+    details.className = 'tool';
+    var summary = document.createElement('summary');
+    var label = document.createElement('span');
+    label.className = 'tool-name';
+    label.textContent = name || 'tool';
+    var badge = document.createElement('span');
+    badge.className = 'tool-badge';
+    badge.textContent = '执行中';
+    summary.appendChild(label);
+    summary.appendChild(badge);
+
+    var argLabel = document.createElement('div');
+    argLabel.className = 'field-label';
+    argLabel.textContent = '参数';
+    var argPre = document.createElement('pre');
+    argPre.className = 'tool-args';
+    argPre.textContent = args || '{}';
+
+    var resLabel = document.createElement('div');
+    resLabel.className = 'field-label';
+    resLabel.textContent = '结果';
+    var resPre = document.createElement('pre');
+    resPre.className = 'tool-result';
+
+    details.appendChild(summary);
+    details.appendChild(argLabel);
+    details.appendChild(argPre);
+    details.appendChild(resLabel);
+    details.appendChild(resPre);
+
+    return {
+      el: details,
+      setResult: function (ok, text, durationMs) {
+        badge.textContent = ok
+          ? '完成' + (typeof durationMs === 'number' ? ' ' + durationMs + 'ms' : '')
+          : '失败';
+        badge.classList.toggle('ok', !!ok);
+        badge.classList.toggle('fail', !ok);
+        resPre.textContent = text || '';
+        if (!ok) { details.open = true; }
+      }
+    };
+  }
+
+  function renderMessages(messages) {
+    var box = byId('messages');
+    clear(box);
+    var blocks = new Map();
+    messages.forEach(function (message) {
+      if (!message || message.role === 'system') { return; }
+      if (message.role === 'user') {
+        createBubble('user').body.textContent = message.content || '';
+        return;
+      }
+      if (message.role === 'assistant') {
+        if (message.content) {
+          createBubble('assistant').body.textContent = message.content;
+        }
+        (message.tool_calls || []).forEach(function (call) {
+          var block = createToolBlock(call.name, call.arguments);
+          blocks.set(call.id, block);
+          box.appendChild(block.el);
+        });
+        return;
+      }
+      if (message.role === 'tool') {
+        var known = message.tool_call_id ? blocks.get(message.tool_call_id) : null;
+        if (known) {
+          known.setResult(true, message.content || '', undefined);
+        } else {
+          var standalone = createToolBlock(message.name || 'tool', '');
+          standalone.setResult(true, message.content || '', undefined);
+          box.appendChild(standalone.el);
+        }
+      }
+    });
+    scrollBottom();
+  }
+
+  // ---- SSE 发送 ---------------------------------------------------------
+
+  function drainSSE(buffer) {
+    var events = [];
+    var index;
+    while ((index = buffer.indexOf('\n\n')) !== -1) {
+      var block = buffer.slice(0, index);
+      buffer = buffer.slice(index + 2);
+      var name = 'message';
+      var dataLines = [];
+      block.split('\n').forEach(function (line) {
+        if (line.indexOf('event:') === 0) {
+          name = line.slice(6).trim();
+        } else if (line.indexOf('data:') === 0) {
+          dataLines.push(line.slice(5).trim());
+        }
+      });
+      if (!dataLines.length) { continue; }
+      var data;
+      try {
+        data = JSON.parse(dataLines.join('\n'));
+      } catch (err) {
+        continue;
+      }
+      events.push({ event: name, data: data });
+    }
+    return { events: events, rest: buffer };
+  }
+
+  // ---- 人工确认 ---------------------------------------------------------
+
+  function showApproval(data) {
+    state.approval = data;
+    var missing = data.phase === 'missing';
+    byId('approval-title').textContent = missing ? '信息不足，需要补充' : '工具调用需要确认';
+    var meta = [data.tool || 'tool', data.reason || data.risk || ''];
+    byId('approval-meta').textContent = meta.filter(Boolean).join(' · ');
+    byId('approval-args').textContent = data.args || '（无参数）';
+    var field = byId('approval-text');
+    field.classList.toggle('hidden', !missing);
+    field.value = '';
+    byId('approval-allow').textContent = missing ? '提交' : '允许';
+    byId('approval-hint').textContent = missing
+      ? '留空提交等同于放弃；不回答就一直等待。'
+      : '不点允许就一直等待；关闭页面会取消本次确认并按拒绝处理。';
+    byId('approval').classList.remove('hidden');
+    if (missing) { field.focus(); }
+  }
+
+  function hideApproval() {
+    state.approval = null;
+    byId('approval').classList.add('hidden');
+  }
+
+  async function resolveApproval(decision) {
+    var data = state.approval;
+    if (!data) { return; }
+    var text = byId('approval-text').value;
+    hideApproval();
+    try {
+      await requestJSON(
+        '/api/sessions/' + encodeURIComponent(data.session_id || state.current) +
+          '/approvals/' + encodeURIComponent(data.id),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision: decision, text: text })
+        }
+      );
+      showStatus(decision === 'allow' ? '已允许，继续执行…' : '已拒绝，模型会继续处理…', '');
+    } catch (err) {
+      showStatus(describeError(err), 'error');
+    }
+  }
+
+  async function sendMessage(event) {
+    if (event) { event.preventDefault(); }
+    if (state.streaming) { return; }
+
+    var input = byId('input');
+    var text = input.value.trim();
+    if (!text) {
+      showStatus('消息不能为空', 'error');
+      input.focus();
+      return;
+    }
+    if (text.length > MAX_MESSAGE_CHARS) {
+      showStatus('消息过长（最多 ' + MAX_MESSAGE_CHARS + ' 字符）', 'error');
+      return;
+    }
+    if (!state.current) {
+      showStatus('请先选择或新建会话', 'error');
+      return;
+    }
+
+    createBubble('user').body.textContent = text;
+    input.value = '';
+    showStatus('正在生成…', '');
+    state.streaming = true;
+    byId('send').disabled = true;
+    settingsHint();
+
+    var bubble = null;
+    var textNode = null;
+    var sawText = false;
+    var openTools = [];
+    var doneData = null;
+    var lastError = '';
+
+    function appendDelta(delta) {
+      if (!delta) { return; }
+      if (!bubble) {
+        bubble = createBubble('assistant');
+        textNode = document.createTextNode('');
+        bubble.body.appendChild(textNode);
+      }
+      textNode.appendData(delta);
+      sawText = true;
+      scrollBottom();
+    }
+
+    function closeBubble() {
+      bubble = null;
+      textNode = null;
+    }
+
+    try {
+      var res = await fetch(
+        '/api/sessions/' + encodeURIComponent(state.current) + '/messages',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        }
+      );
+      if (!res.ok) {
+        var errorBody = null;
+        try { errorBody = await res.json(); } catch (err) { errorBody = null; }
+        throw new Error(errorBody && errorBody.error ? errorBody.error : '发送失败（HTTP ' + res.status + '）');
+      }
+      if (!res.body) {
+        throw new Error('当前浏览器不支持流式读取');
+      }
+
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = '';
+      while (true) {
+        var chunk = await reader.read();
+        if (chunk.done) { break; }
+        buffer += decoder.decode(chunk.value, { stream: true });
+        var parsed = drainSSE(buffer);
+        buffer = parsed.rest;
+        parsed.events.forEach(function (item) {
+          var data = item.data || {};
+          if (item.event === 'text') {
+            appendDelta(data.delta || '');
+          } else if (item.event === 'tool_start') {
+            closeBubble();
+            var block = createToolBlock(data.tool, data.args);
+            byId('messages').appendChild(block.el);
+            openTools.push({ name: data.tool, block: block });
+            scrollBottom();
+          } else if (item.event === 'tool_end') {
+            var slot = null;
+            for (var index = openTools.length - 1; index >= 0; index -= 1) {
+              if (openTools[index].name === data.tool) {
+                slot = openTools[index];
+                openTools.splice(index, 1);
+                break;
+              }
+            }
+            if (!slot) {
+              slot = { name: data.tool, block: createToolBlock(data.tool, '') };
+              byId('messages').appendChild(slot.block.el);
+            }
+            slot.block.setResult(!!data.ok, data.text || '', data.duration_ms);
+            scrollBottom();
+          } else if (item.event === 'approval') {
+            showApproval(data);
+          } else if (item.event === 'hitl') {
+            if (!data.ok) {
+              lastError = data.text || '工具调用被拒绝';
+              showStatus(lastError, 'error');
+            }
+          } else if (item.event === 'error') {
+            lastError = data.message || '执行出错';
+            showStatus(lastError, 'error');
+          } else if (item.event === 'done') {
+            doneData = data;
+          }
+        });
+      }
+
+      if (!sawText && doneData && doneData.text) {
+        appendDelta(doneData.text);
+      }
+      if (doneData) {
+        if (doneData.ok) {
+          showStatus('完成，共 ' + doneData.turns + ' 轮', '');
+        } else {
+          showStatus('执行失败：' + (lastError || '服务端未返回原因'), 'error');
+        }
+      } else {
+        showStatus('连接已结束', '');
+      }
+    } catch (err) {
+      showStatus(describeError(err), 'error');
+    } finally {
+      state.streaming = false;
+      byId('send').disabled = false;
+      hideApproval();
+      settingsHint();
+      await loadSessions();
+      if (state.current) {
+        var turn = doneData && doneData.turns ? doneData.turns : null;
+        await loadTrace(state.current, turn);
+      }
+    }
+  }
+
+  // ---- trace ------------------------------------------------------------
+
+  async function loadTrace(id, turn) {
+    var url = '/api/sessions/' + encodeURIComponent(id) + '/trace';
+    if (turn !== null && turn !== undefined) {
+      url += '?turn=' + encodeURIComponent(turn);
+    }
+    var records;
+    try {
+      records = await requestJSON(url);
+    } catch (err) {
+      renderTraceError(describeError(err));
+      return;
+    }
+    if (state.current !== id) { return; }
+    if (turn === null && Array.isArray(records) && records.length) {
+      var maxTurn = 0;
+      records.forEach(function (record) {
+        var value = Number(record.turn) || 0;
+        if (value > maxTurn) { maxTurn = value; }
+      });
+      records = records.filter(function (record) { return Number(record.turn) === maxTurn; });
+      byId('trace-turn').textContent = maxTurn ? '第 ' + maxTurn + ' 轮' : '';
+    } else {
+      byId('trace-turn').textContent = turn ? '第 ' + turn + ' 轮' : '';
+    }
+    renderTrace(records);
+  }
+
+  function renderTraceError(message) {
+    var box = byId('trace-list');
+    clear(box);
+    var text = document.createElement('p');
+    text.className = 'muted';
+    text.textContent = message || 'trace 不可用';
+    box.appendChild(text);
+  }
+
+  function renderTrace(records) {
+    var box = byId('trace-list');
+    clear(box);
+    if (!Array.isArray(records) || !records.length) {
+      var empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = '本轮暂无 trace 记录';
+      box.appendChild(empty);
+      return;
+    }
+    records.forEach(function (record) {
+      var row = document.createElement('div');
+      row.className = 'trace-row';
+      var head = document.createElement('div');
+      head.className = 'trace-head';
+      var event = document.createElement('span');
+      event.className = 'trace-event';
+      event.textContent = record.event || '-';
+      var meta = document.createElement('span');
+      meta.className = 'trace-meta';
+      meta.textContent = 'turn ' + (record.turn || 0) + (record.tool ? ' · ' + record.tool : '');
+      head.appendChild(event);
+      head.appendChild(meta);
+      row.appendChild(head);
+
+      var parts = [];
+      if (record.duration_ms) { parts.push(record.duration_ms + 'ms'); }
+      if (record.prompt_tokens) { parts.push('prompt≈' + record.prompt_tokens); }
+      if (record.completion_tokens) { parts.push('completion≈' + record.completion_tokens); }
+      if (record.ok === false) { parts.push('failed'); }
+      if (record.error_code) { parts.push(record.error_code); }
+      if (parts.length) {
+        var detail = document.createElement('div');
+        detail.className = 'trace-detail';
+        detail.textContent = parts.join(' · ');
+        row.appendChild(detail);
+      }
+      if (record.detail) {
+        var extra = document.createElement('div');
+        extra.className = 'trace-extra';
+        extra.textContent = record.detail;
+        row.appendChild(extra);
+      }
+      box.appendChild(row);
+    });
+  }
+
+  // ---- 初始化 -----------------------------------------------------------
+
+  byId('composer').addEventListener('submit', sendMessage);
+
+  byId('approval-allow').addEventListener('click', function () { resolveApproval('allow'); });
+  byId('approval-deny').addEventListener('click', function () { resolveApproval('deny'); });
+  byId('approval-text').addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      resolveApproval('allow');
+    }
+  });
+
+  byId('input').addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      byId('composer').requestSubmit();
+    }
+  });
+
+  byId('new-session').addEventListener('click', async function () {
+    try {
+      var data = await requestJSON('/api/sessions', { method: 'POST' });
+      state.current = data.id;
+      await loadSessions();
+      await selectSession(data.id);
+      showStatus('已新建会话 ' + data.id, '');
+    } catch (err) {
+      showStatus(describeError(err), 'error');
+    }
+  });
+
+  byId('trace-toggle').addEventListener('click', function () {
+    byId('trace-panel').classList.toggle('open');
+  });
+
+  SETTINGS.forEach(function (item) {
+    byId(item.input).addEventListener('change', function () {
+      saveSetting(item.key, byId(item.input).checked ? 'on' : 'off');
+    });
+  });
+  byId('set-workdir-apply').addEventListener('click', saveWorkdir);
+  byId('set-workdir').addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveWorkdir();
+    }
+  });
+  setSettingsEnabled(false);
+  settingsHint();
+
+  loadSessions();
+})();
+</script>
+</body>
+</html>
