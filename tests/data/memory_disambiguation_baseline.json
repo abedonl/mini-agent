@@ -1,0 +1,74 @@
+{
+  "version": 2,
+  "note": "同一份评测集（29 条记忆 / 28 条查询）下的两组数字，按向量后端分别固化。baseline 把 subject_filter 换成恒等函数（等价于改造前的纯余弦排序）；hybrid 走当前 MemoryStore.search。--check 按当前 embedder 的 model 选择对应 runs 条目；改评测集或改检索策略都会让 --check 失败。",
+  "dataset": "tests/data/memory_disambiguation.json",
+  "measured_at": "2026-11-10",
+  "runs": {
+    "offline-char-bigram-1024": {
+      "embedder": {
+        "kind": "LocalHashEmbedder",
+        "model": "offline-char-bigram-1024",
+        "dim": 1024
+      },
+      "note": "确定性本地字符 n-gram 哈希向量（CJK 一元 0.3 / 二元 1.0 / ASCII 词 1.0），无网络、无 key，用于离线复现；不是 bge-m3。",
+      "frozen": {
+        "baseline": {
+          "recall@3": 1.0,
+          "recall@5": 1.0,
+          "disambiguation": 0.851852
+        },
+        "hybrid": {
+          "recall@3": 1.0,
+          "recall@5": 1.0,
+          "disambiguation": 0.962963
+        }
+      }
+    },
+    "BAAI/bge-m3": {
+      "embedder": {
+        "kind": "EmbeddingClient",
+        "model": "BAAI/bge-m3",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "dim": 1024
+      },
+      "note": "真实 SiliconFlow /embeddings 接口，key 仅经 SILICONFLOW_API_KEY 环境变量传入。两次干净复跑数字完全一致（run2 / run3）。首轮曾出现一次查询嵌入瞬时失败：q17 按降级设计返回空结果，baseline recall@3 / recall@5 记为 0.9643，其余字段不受影响；该次失败未捕获到具体错误类型，复跑无失败，故固化干净口径。",
+      "measurements": {
+        "requests": 29,
+        "texts": 57,
+        "entries": 29,
+        "entries_batch_seconds": [0.713, 0.782, 0.618],
+        "query_count": 28,
+        "query_total_seconds": [8.115, 7.579, 8.068],
+        "query_mean_ms": [290, 271, 288],
+        "query_max_ms": [406, 578, 487],
+        "embeddings_jsonl_bytes": 663551,
+        "runs_observed": 3,
+        "clean_runs": 2
+      },
+      "frozen": {
+        "baseline": {
+          "recall@3": 1.0,
+          "recall@5": 1.0,
+          "disambiguation": 0.925926
+        },
+        "hybrid": {
+          "recall@3": 1.0,
+          "recall@5": 1.0,
+          "disambiguation": 0.962963
+        }
+      }
+    }
+  },
+  "frozen": {
+    "baseline": {
+      "recall@3": 1.0,
+      "recall@5": 1.0,
+      "disambiguation": 0.851852
+    },
+    "hybrid": {
+      "recall@3": 1.0,
+      "recall@5": 1.0,
+      "disambiguation": 0.962963
+    }
+  }
+}

@@ -1,0 +1,437 @@
+{
+  "version": 2,
+  "description": "记忆检索消歧评测集。同名条目刻意写成近似文本（区别只在 metadata 的 subject/rel），用来区分“纯向量余弦”和“先按 subject/rel 过滤再排序”。条目的 subject / rel / backstory 为混合检索需要的信息，纯向量基线会忽略它们。",
+  "entries": [
+    {
+      "id": "p01",
+      "kind": "fact",
+      "text": "张医生在城东口腔诊所出诊，复诊一般排在周三下午。",
+      "subject": "张医生",
+      "rel": "本人",
+      "backstory": "第一次洗牙时在前台登记",
+      "created_at": "2026-01-01 00:00:01"
+    },
+    {
+      "id": "p02",
+      "kind": "fact",
+      "text": "张医生在人民医院心内科出诊，复诊一般排在周四上午。",
+      "subject": "张医生",
+      "rel": "家人",
+      "backstory": "陪父亲复诊时记下",
+      "created_at": "2026-01-01 00:00:02"
+    },
+    {
+      "id": "p03",
+      "kind": "fact",
+      "text": "李老师教语文，家长会一般安排在月底的周五。",
+      "subject": "李老师",
+      "rel": "家人",
+      "backstory": "开学家长会记录",
+      "created_at": "2026-01-01 00:00:03"
+    },
+    {
+      "id": "p04",
+      "kind": "fact",
+      "text": "李老师做后端评审，评审会一般安排在月底的周五。",
+      "subject": "李老师",
+      "rel": "同事",
+      "backstory": "部门周会自我介绍",
+      "created_at": "2026-01-01 00:00:04"
+    },
+    {
+      "id": "p05",
+      "kind": "fact",
+      "text": "王经理负责合同流程，签字前要先走审批。",
+      "subject": "王经理",
+      "rel": "同事",
+      "backstory": "签约前对接记录",
+      "created_at": "2026-01-01 00:00:05"
+    },
+    {
+      "id": "p06",
+      "kind": "fact",
+      "text": "王经理负责厨房改造的排期，验收前要先到现场。",
+      "subject": "王经理",
+      "rel": "本人",
+      "backstory": "装修合同附件",
+      "created_at": "2026-01-01 00:00:06"
+    },
+    {
+      "id": "p07",
+      "kind": "fact",
+      "text": "刘工负责生产环境的告警处理，有问题先打电话。",
+      "subject": "刘工",
+      "rel": "同事",
+      "backstory": "值班表",
+      "created_at": "2026-01-01 00:00:07"
+    },
+    {
+      "id": "p08",
+      "kind": "fact",
+      "text": "刘工负责水电改造的现场验收，有问题先发消息。",
+      "subject": "刘工",
+      "rel": "本人",
+      "backstory": "装修群聊",
+      "created_at": "2026-01-01 00:00:08"
+    },
+    {
+      "id": "p09",
+      "kind": "fact",
+      "text": "陈阿姨每周二上午来家里做保洁，钥匙放在门口柜子。",
+      "subject": "陈阿姨",
+      "rel": "本人",
+      "backstory": "家政合同",
+      "created_at": "2026-01-01 00:00:09"
+    },
+    {
+      "id": "p10",
+      "kind": "fact",
+      "text": "陈阿姨住在楼下，养了一只柯基，周末常在小区遛狗。",
+      "subject": "陈阿姨",
+      "rel": "朋友",
+      "backstory": "小区遛狗时聊天",
+      "created_at": "2026-01-01 00:00:10"
+    },
+    {
+      "id": "w01",
+      "kind": "fact",
+      "text": "我目前在杭州云栖数据科技有限公司上班。",
+      "subject": "用户",
+      "rel": "本人",
+      "backstory": "",
+      "created_at": "2026-01-01 00:00:11"
+    },
+    {
+      "id": "w02",
+      "kind": "fact",
+      "text": "我的职位是后端工程师，职级 P6。",
+      "subject": "用户",
+      "rel": "本人",
+      "backstory": "",
+      "created_at": "2026-01-01 00:00:12"
+    },
+    {
+      "id": "w03",
+      "kind": "fact",
+      "text": "我主要负责订单服务的接口开发和线上稳定性。",
+      "subject": "用户",
+      "rel": "本人",
+      "backstory": "",
+      "created_at": "2026-01-01 00:00:13"
+    },
+    {
+      "id": "w04",
+      "kind": "fact",
+      "text": "团队的技术栈是 Python 3.12、FastAPI 和 PostgreSQL。",
+      "subject": "用户",
+      "rel": "本人",
+      "backstory": "",
+      "created_at": "2026-01-01 00:00:14"
+    },
+    {
+      "id": "w05",
+      "kind": "fact",
+      "text": "我每周三晚上要参加部门的需求评审会。",
+      "subject": "用户",
+      "rel": "本人",
+      "backstory": "",
+      "created_at": "2026-01-01 00:00:15"
+    },
+    {
+      "id": "f01",
+      "kind": "fact",
+      "text": "我爸今年 68 岁，有高血压，需要每季度复查一次。",
+      "subject": "父亲",
+      "rel": "家人",
+      "backstory": "体检报告",
+      "created_at": "2026-01-01 00:00:16"
+    },
+    {
+      "id": "f02",
+      "kind": "fact",
+      "text": "我妈对青霉素过敏，体检时一定要提前告诉医生。",
+      "subject": "母亲",
+      "rel": "家人",
+      "backstory": "门诊病历",
+      "created_at": "2026-01-01 00:00:17"
+    },
+    {
+      "id": "f03",
+      "kind": "fact",
+      "text": "我女儿今年上小学三年级，周三下午有兴趣班。",
+      "subject": "女儿",
+      "rel": "家人",
+      "backstory": "学校通知",
+      "created_at": "2026-01-01 00:00:18"
+    },
+    {
+      "id": "f04",
+      "kind": "fact",
+      "text": "家人的体检套餐要覆盖心脑血管和肿瘤筛查这两项。",
+      "subject": "家人",
+      "rel": "家人",
+      "backstory": "去年体检后总结",
+      "created_at": "2026-01-01 00:00:19"
+    },
+    {
+      "id": "f05",
+      "kind": "fact",
+      "text": "我爸的手机号存在通讯录“老爸”条目下，紧急联系人写的是他。",
+      "subject": "父亲",
+      "rel": "家人",
+      "backstory": "手机通讯录整理",
+      "created_at": "2026-01-01 00:00:20"
+    },
+    {
+      "id": "c01",
+      "kind": "fact",
+      "text": "同事老陈负责数据库迁移，遇到慢查询直接找他。",
+      "subject": "老陈",
+      "rel": "同事",
+      "backstory": "迁移启动会",
+      "created_at": "2026-01-01 00:00:21"
+    },
+    {
+      "id": "c02",
+      "kind": "fact",
+      "text": "我和同事约好每周五下午做代码评审。",
+      "subject": "同事",
+      "rel": "同事",
+      "backstory": "团队约定",
+      "created_at": "2026-01-01 00:00:22"
+    },
+    {
+      "id": "u01",
+      "kind": "fact",
+      "text": "项目默认分支是 main，发布靠打 tag 触发流水线。",
+      "subject": "",
+      "rel": "",
+      "backstory": "",
+      "created_at": "2026-01-01 00:00:23"
+    },
+    {
+      "id": "u02",
+      "kind": "fact",
+      "text": "用户偏好用 uv 管理 Python 项目依赖，不用 pip。",
+      "subject": "用户",
+      "rel": "本人",
+      "backstory": "",
+      "created_at": "2026-01-01 00:00:24"
+    },
+    {
+      "id": "u03",
+      "kind": "event",
+      "text": "上周把记忆检索从关键词匹配改成了纯向量余弦。",
+      "subject": "",
+      "rel": "",
+      "backstory": "",
+      "created_at": "2026-01-01 00:00:25"
+    },
+    {
+      "id": "u04",
+      "kind": "fact",
+      "text": "SQLite 只做本地缓存，线上主库用的是 PostgreSQL。",
+      "subject": "",
+      "rel": "",
+      "backstory": "",
+      "created_at": "2026-01-01 00:00:26"
+    },
+    {
+      "id": "u05",
+      "kind": "event",
+      "text": "十月份完成了工作流文档的更新。",
+      "subject": "",
+      "rel": "",
+      "backstory": "",
+      "created_at": "2026-01-01 00:00:27"
+    },
+    {
+      "id": "u06",
+      "kind": "fact",
+      "text": "部署用 Docker Compose，日志写在 /var/log/miniagent。",
+      "subject": "",
+      "rel": "",
+      "backstory": "",
+      "created_at": "2026-01-01 00:00:28"
+    },
+    {
+      "id": "u07",
+      "kind": "fact",
+      "text": "用户喜欢喝手冲咖啡，不加糖。",
+      "subject": "用户",
+      "rel": "本人",
+      "backstory": "",
+      "created_at": "2026-01-01 00:00:29"
+    }
+  ],
+  "queries": [
+    {
+      "id": "q01",
+      "query": "我的牙医复诊一般排在什么时候？",
+      "category": "同名不同人",
+      "expected": ["p01"]
+    },
+    {
+      "id": "q02",
+      "query": "我爸看的那个张医生，复诊约在哪天？",
+      "category": "同名不同人",
+      "expected": ["p02"]
+    },
+    {
+      "id": "q03",
+      "query": "我女儿班主任那边的会安排在什么时候？",
+      "category": "同名不同人",
+      "expected": ["p03"]
+    },
+    {
+      "id": "q04",
+      "query": "评审会找哪位李老师确认，她负责什么？",
+      "category": "同名不同人",
+      "expected": ["p04"]
+    },
+    {
+      "id": "q05",
+      "query": "我家那位王经理，最近要准备些什么？",
+      "category": "同名不同人",
+      "expected": ["p06"]
+    },
+    {
+      "id": "q06",
+      "query": "合同审批该走哪位王经理？",
+      "category": "同名不同人",
+      "expected": ["p05"]
+    },
+    {
+      "id": "q07",
+      "query": "我家的刘工，出了问题该打电话还是发消息？",
+      "category": "同名不同人",
+      "expected": ["p08"]
+    },
+    {
+      "id": "q08",
+      "query": "公司线上告警找哪位刘工，怎么联系？",
+      "category": "同名不同人",
+      "expected": ["p07"]
+    },
+    {
+      "id": "q09",
+      "query": "陈阿姨什么时候来家里打扫？",
+      "category": "同名不同人",
+      "expected": ["p09"]
+    },
+    {
+      "id": "q10",
+      "query": "楼下陈阿姨养的狗是什么品种？",
+      "category": "同名不同人",
+      "expected": ["p10"]
+    },
+    {
+      "id": "q11",
+      "query": "我在哪家公司上班，担任什么职位？",
+      "category": "同主体多事实",
+      "expected": ["w01", "w02"]
+    },
+    {
+      "id": "q12",
+      "query": "我平时主要负责什么工作内容？",
+      "category": "同主体多事实",
+      "expected": ["w03"]
+    },
+    {
+      "id": "q13",
+      "query": "我们团队用什么技术栈？",
+      "category": "同主体多事实",
+      "expected": ["w04"]
+    },
+    {
+      "id": "q14",
+      "query": "我这周哪个晚上有评审会？",
+      "category": "同主体多事实",
+      "expected": ["w05"]
+    },
+    {
+      "id": "q15",
+      "query": "帮我安排家人的体检，套餐要覆盖哪些项目？",
+      "category": "关系推理",
+      "expected": ["f04"]
+    },
+    {
+      "id": "q16",
+      "query": "我爸的高血压多久复查一次？",
+      "category": "关系推理",
+      "expected": ["f01"]
+    },
+    {
+      "id": "q17",
+      "query": "我妈体检有什么要提前告诉医生的？",
+      "category": "关系推理",
+      "expected": ["f02"]
+    },
+    {
+      "id": "q18",
+      "query": "我女儿周三下午有什么安排？",
+      "category": "关系推理",
+      "expected": ["f03"]
+    },
+    {
+      "id": "q19",
+      "query": "紧急联系人是谁，号码记在哪里？",
+      "category": "关系推理",
+      "expected": ["f05"]
+    },
+    {
+      "id": "q20",
+      "query": "项目默认分支是什么？",
+      "category": "无歧义反例",
+      "expected": ["u01"]
+    },
+    {
+      "id": "q21",
+      "query": "我平时用什么管理 Python 依赖？",
+      "category": "无歧义反例",
+      "expected": ["u02"]
+    },
+    {
+      "id": "q22",
+      "query": "线上主库用的是什么数据库？",
+      "category": "无歧义反例",
+      "expected": ["u04"]
+    },
+    {
+      "id": "q23",
+      "query": "部署方式是什么，日志写在哪？",
+      "category": "无歧义反例",
+      "expected": ["u06"]
+    },
+    {
+      "id": "q24",
+      "query": "我喝咖啡有什么习惯？",
+      "category": "无歧义反例",
+      "expected": ["u07"]
+    },
+    {
+      "id": "q25",
+      "query": "记忆检索是什么时候改的，改成什么了？",
+      "category": "无歧义反例",
+      "expected": ["u03"]
+    },
+    {
+      "id": "q26",
+      "query": "最近的文档更新做了什么？",
+      "category": "无歧义反例",
+      "expected": ["u05"]
+    },
+    {
+      "id": "q27",
+      "query": "代码评审安排在什么时候？",
+      "category": "无歧义反例",
+      "expected": ["c02"]
+    },
+    {
+      "id": "q28",
+      "query": "数据库迁移有问题该找谁？",
+      "category": "无歧义反例",
+      "expected": ["c01"]
+    }
+  ]
+}

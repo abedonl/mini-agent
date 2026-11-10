@@ -1,19 +1,45 @@
-"""M5 记忆与人格：中文检索、攒批蒸馏、记忆门两条分支、soul 优先级。"""
+"""M5 记忆与人格：向量检索、攒批蒸馏、记忆门两条分支、soul 优先级。"""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from miniagent.agent import Agent
+from miniagent.embeddings import EmbeddingClient
 from miniagent.errors import ProviderError
 from miniagent.llm import LLMResponse, Message, MockProvider
 from miniagent.logging import TraceLogger, format_record
 from miniagent.memory import MemoryStore
 from miniagent.soul import DEFAULT_SOUL, load_soul
 from miniagent.tools import ToolRegistry
+
+
+def memory_store_with_vectors(
+    tmp_path: Path, tracer: TraceLogger | None = None
+) -> MemoryStore:
+    """固定返回同一向量的 MockTransport，供"记忆门 + 注入"链路测试使用。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        data = [
+            {"index": index, "embedding": [1.0, 0.0, 0.0]}
+            for index in range(len(payload["input"]))
+        ]
+        return httpx.Response(200, json={"data": data})
+
+    embedder = EmbeddingClient(
+        api_key="test-key",
+        model="test-model",
+        base_url="https://embed.test/v1",
+        transport=httpx.MockTransport(handler),
+        retry_delay=0.0,
+    )
+    return MemoryStore(tmp_path, embedder=embedder, tracer=tracer)
 
 
 class FailingProvider:
@@ -27,24 +53,6 @@ class FailingProvider:
         raise ProviderError("gate 不可用")
 
 
-def test_chinese_fact_is_found_by_chinese_query(tmp_path: Path) -> None:
-    """先红后绿：中文事实必须能被中文提问检索到，不能因词元切分退化成空查询。"""
-    store = MemoryStore(tmp_path)
-    store.add("fact", "用户偏好用 uv 管理 Python 项目依赖")
-
-    hits = store.search("我平时用什么管理依赖？")
-
-    assert hits, "中文查询必须能命中中文事实"
-    assert hits[0].text == "用户偏好用 uv 管理 Python 项目依赖"
-
-
-def test_unrelated_query_returns_nothing(tmp_path: Path) -> None:
-    store = MemoryStore(tmp_path)
-    store.add("fact", "用户偏好用 uv 管理 Python 项目依赖")
-
-    assert store.search("今天天气怎么样") == []
-
-
 def test_add_writes_human_readable_view(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path)
     store.add("fact", "项目使用 Python 3.12")
@@ -53,9 +61,13 @@ def test_add_writes_human_readable_view(tmp_path: Path) -> None:
     view = (tmp_path / "memory.md").read_text(encoding="utf-8")
 
     assert "# 记忆" in view
-    assert "共 2 条：事实 1 条，事件 1 条" in view
+    assert "共 2 条：偏好 0 条，项目事实 1 条，待办 0 条，事件 1 条" in view
+    assert "## 项目事实" in view
+    assert "## 事件" in view
     assert "项目使用 Python 3.12" in view
     assert "完成了 M4 的 trace 回放" in view
+    # 每条带可追溯 id（memory.jsonl 条目 id 的前 8 位）
+    assert "- [" in view
 
 
 def test_distill_only_runs_when_batch_is_full(tmp_path: Path) -> None:
@@ -112,7 +124,9 @@ def test_gate_skip_does_not_inject_memory(tmp_path: Path) -> None:
     assert result.ok is True
     assert len(provider.calls) == 2  # 门 + 主对话
     main_context = "\n".join(message.content or "" for message in provider.calls[1])
-    assert "uv 管理 Python 项目依赖" not in main_context
+    # 记忆门只控制"本轮检索注入"；长期记忆快照是 system prompt 的另一层，
+    # 按设计固定带上，不受这里影响（见 tests/test_context_layers.py）。
+    assert "与本轮相关的历史记忆" not in main_context
 
     gate = next(
         record
@@ -126,10 +140,10 @@ def test_gate_skip_does_not_inject_memory(tmp_path: Path) -> None:
 
 
 def test_gate_search_injects_memory(tmp_path: Path) -> None:
-    store = MemoryStore(tmp_path)
+    tracer = TraceLogger("s-gate-search", tmp_path / "logs")
+    store = memory_store_with_vectors(tmp_path, tracer)
     store.add("fact", "用户偏好用 uv 管理 Python 项目依赖")
     provider = MockProvider([LLMResponse(content="YES"), LLMResponse(content="你常用 uv")])
-    tracer = TraceLogger("s-gate-search", tmp_path / "logs")
     agent = Agent(provider=provider, registry=ToolRegistry(), memory=store, tracer=tracer)
 
     agent.run("我平时用什么管理依赖？")
@@ -146,10 +160,10 @@ def test_gate_search_injects_memory(tmp_path: Path) -> None:
 
 
 def test_gate_parse_failure_defaults_to_search(tmp_path: Path) -> None:
-    store = MemoryStore(tmp_path)
+    tracer = TraceLogger("s-gate-parse", tmp_path / "logs")
+    store = memory_store_with_vectors(tmp_path, tracer)
     store.add("fact", "用户偏好用 uv 管理 Python 项目依赖")
     provider = MockProvider([LLMResponse(content="让我想想"), LLMResponse(content="答")])
-    tracer = TraceLogger("s-gate-parse", tmp_path / "logs")
     agent = Agent(provider=provider, registry=ToolRegistry(), memory=store, tracer=tracer)
 
     agent.run("我平时用什么管理依赖？")
@@ -166,10 +180,10 @@ def test_gate_parse_failure_defaults_to_search(tmp_path: Path) -> None:
 
 
 def test_gate_provider_error_defaults_to_search(tmp_path: Path) -> None:
-    store = MemoryStore(tmp_path)
+    tracer = TraceLogger("s-gate-error", tmp_path / "logs")
+    store = memory_store_with_vectors(tmp_path, tracer)
     store.add("fact", "用户偏好用 uv 管理 Python 项目依赖")
     provider = MockProvider([LLMResponse(content="答")])
-    tracer = TraceLogger("s-gate-error", tmp_path / "logs")
     agent = Agent(
         provider=provider,
         registry=ToolRegistry(),
@@ -235,3 +249,121 @@ def test_gate_answer_parsing(answer: str, expected: bool) -> None:
     from miniagent.memory import parse_gate_answer
 
     assert parse_gate_answer(answer).search is expected
+
+
+def _distill_once(store: MemoryStore, provider: MockProvider, user: str) -> str:
+    store.record_turn(user, "好")
+    return store.maybe_distill(provider)
+
+
+def test_second_session_sees_previous_deposits(tmp_path: Path) -> None:
+    """两个独立 Agent 实例模拟两次会话：第二次启动时能看到第一次的沉淀。"""
+    first_store = MemoryStore(tmp_path, batch_size=1, session_id="s-first")
+    first_provider = MockProvider(
+        [LLMResponse(content='[{"kind": "fact", "text": "项目默认分支是 main"}]')]
+    )
+    first_agent = Agent(
+        provider=first_provider,
+        registry=ToolRegistry(),
+        memory=first_store,
+    )
+    assert first_agent.messages  # 第一个会话正常建立
+    assert _distill_once(first_store, first_provider, "记一下：项目默认分支是 main") == "ok"
+
+    second_store = MemoryStore(tmp_path, session_id="s-second")
+    second_agent = Agent(
+        provider=MockProvider(),
+        registry=ToolRegistry(),
+        memory=second_store,
+    )
+
+    system = second_agent.messages[0].content or ""
+    assert "项目默认分支是 main" in system
+    assert "## 长期记忆快照" in system
+
+
+def test_same_fact_distilled_twice_is_not_duplicated(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path, batch_size=1)
+    response = '[{"kind": "fact", "text": "用户喜欢深色主题"}]'
+    provider = MockProvider([LLMResponse(content=response), LLMResponse(content=response)])
+
+    assert _distill_once(store, provider, "我喜欢深色主题") == "ok"
+    assert _distill_once(store, provider, "再说一次：我喜欢深色主题") == "ok"
+
+    view = (tmp_path / "memory.md").read_text(encoding="utf-8")
+    assert view.count("用户喜欢深色主题") == 1
+    assert "共 1 条" in view
+    # memory.jsonl 仍是只追加，去重只发生在沉淀视图
+    assert len(store.entries()) == 2
+
+
+def test_conflicting_fact_keeps_newest_value(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path, batch_size=1)
+    provider = MockProvider(
+        [
+            LLMResponse(content='[{"kind": "fact", "text": "项目默认分支是 main"}]'),
+            LLMResponse(content='[{"kind": "fact", "text": "项目默认分支是 develop"}]'),
+        ]
+    )
+
+    assert _distill_once(store, provider, "项目默认分支是 main") == "ok"
+    assert _distill_once(store, provider, "后来改成了 develop") == "ok"
+
+    view = (tmp_path / "memory.md").read_text(encoding="utf-8")
+    assert "项目默认分支是 develop" in view
+    assert "项目默认分支是 main" not in view
+    assert "共 1 条" in view
+
+
+def test_snapshot_truncates_by_section_priority(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path)
+    for index in range(20):
+        store.add("event", f"事件{index:02d} " + "历史" * 20)
+        store.add("fact", f"偏好{index:02d} 用户喜欢方案{index:02d} " + "说明" * 20)
+
+    full = store.snapshot(10000)
+    limited = store.snapshot(600)
+
+    assert len(limited) <= 600
+    assert len(full) > 600
+    assert "已截断，共省略" in limited
+    assert "## 偏好" in limited
+    assert "用户喜欢方案19" in limited  # 高优先级整条保留
+    assert "## 事件" not in limited  # 低优先级先被省略
+    assert limited.count("- [") < full.count("- [")
+
+
+def test_view_write_failure_degrades_and_retries(tmp_path: Path, monkeypatch) -> None:
+    import miniagent.memory as memory_module
+
+    tracer = TraceLogger("s-write-fail", tmp_path / "logs")
+    store = MemoryStore(tmp_path, tracer=tracer)
+    real_replace = memory_module.os.replace
+
+    def fail_replace(src: str, dst: str) -> None:
+        if Path(dst).name == "memory.md":
+            raise OSError("disk full")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(memory_module.os, "replace", fail_replace)
+    store.add("fact", "项目使用 Python 3.12")  # 写视图失败不影响条目落盘
+
+    assert len(store.entries()) == 1
+    assert not (tmp_path / "memory.md").exists()
+    assert not [path for path in tmp_path.iterdir() if path.name.endswith(".tmp")]
+
+    event = next(
+        record
+        for record in TraceLogger.load("s-write-fail", tmp_path / "logs")
+        if record.event == "memory_write"
+    )
+    assert event.ok is False
+    assert event.error_code == "memory_view_write_failed"
+
+    monkeypatch.setattr(memory_module.os, "replace", real_replace)
+    store.add("fact", "项目使用 Python 3.13")  # 下次写入自动重试
+
+    view = (tmp_path / "memory.md").read_text(encoding="utf-8")
+    assert "Python 3.12" in view
+    assert "Python 3.13" in view
+    assert not [path for path in tmp_path.iterdir() if path.name.endswith(".tmp")]
