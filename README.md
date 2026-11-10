@@ -2,9 +2,9 @@
 
 一个从零手写的命令行 AI agent：模型能自己读文件、写文件、跑命令，并把结果接回推理循环。
 
-不依赖 LangChain 等 agent 框架，核心循环与工具层均为自研，约 1500 行 Python（含测试约 2700 行）。目标是做一个**可读、可控、可扩展**的最小 harness，而不是功能堆砌。
+不依赖 LangChain 等 agent 框架，核心循环、工具层、记忆与网页端都在本仓库；`uv sync` 后 `uv run miniagent --mock` 离线跑通。能做：多轮工具调用与并发、SSE 流式、会话恢复与三级压缩、计划执行、人工确认、向量记忆与本地网页界面。规模 14346 行（`src/` 8108 + `tests/` 6238，`*.py` 全部行，含注释与空行，2026-11-10 实测）。
 
-当前进度：**M0–M5 完成（Mock 下完整可演示）**：多轮工具循环、会话持久化、上下文裁剪、SSE 流式、重试/限流/工具并发、结构化 trace、路径白名单、CI，以及 soul.md 人格、记忆写入与检索、记忆门、提示词注入防护。
+当前进度：M0–M14 完成（M1 录屏暂缓），逐项状态见文末"路线图"。
 
 ## 快速开始
 
@@ -60,7 +60,16 @@ no_progress_repeat = 3
 
 ## 本地网页界面
 
-只监听 `127.0.0.1` 的极简网页界面：查看/切换会话、查看消息与工具调用、发送消息并逐字看到 SSE 输出、查看当前轮 trace，并可直接切换计划模式 / 收尾校验 / 人工确认三个开关（按会话保存）。设置栏还可以切换当前会话的工作目录，只能在服务端授权的目录内选择（见下文"工作目录"）。只用标准库实现，不新增依赖。
+只监听 `127.0.0.1` 的极简网页界面，与 CLI 共用同一套 Agent、会话目录和 `config.toml` / 环境变量，只是多一个浏览器入口；只用标准库实现，不新增依赖。
+
+- **会话**：新建、切换会话，查看历史消息与每次工具调用的参数、结果。
+- **对话**：发送消息后逐字接收 SSE 输出；工具调用以 `tool_start` / `tool_end` 实时出现，计划模式下逐步骤执行的过程同样可见。
+- **开关**：计划模式、收尾校验（仅计划模式）、人工确认，按会话保存，只影响下一条消息。
+- **人工确认弹窗**：危险工具调用前弹出，显示工具名与参数，可允许 / 拒绝；信息不足时可补充文本后继续**同一个**工具调用。
+- **Trace 面板**：查看当前轮 trace 的白名单字段，不暴露 `session_id` 等内部字段。
+- **工作目录**：设置栏可切换当前会话的工作目录，只能选服务端授权根内的目录（见下文"工作目录"）。
+
+页面截图：运行时自行截取即可，仓库暂不放图。
 
 ```bash
 # Mock：离线体验，不请求网络
@@ -75,7 +84,7 @@ uv run python -m miniagent.web --mock --session-dir ./sessions --log-dir ./logs 
 
 打开 <http://127.0.0.1:8770/>。
 
-服务是一个前台进程：终端里按 `Ctrl+C` 或关闭窗口后进程即结束，浏览器再刷新会显示"127.0.0.1 拒绝了我们的连接请求"（`ERR_CONNECTION_REFUSED`）。这不是界面故障，重新执行上面的命令即可。端口被别的进程占用时启动会打印 `无法监听 127.0.0.1:8770`，用 `--port` 换一个即可。
+服务是一个前台进程：终端里按 `Ctrl+C`（或关闭终端）后进程即结束，只关掉浏览器标签不会停掉服务。进程结束后再刷新会显示"127.0.0.1 拒绝了我们的连接请求"（`ERR_CONNECTION_REFUSED`）。这不是界面故障，重新执行上面的命令即可。端口被别的进程占用时启动会打印 `无法监听 127.0.0.1:8770`，用 `--port` 换一个即可。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -513,7 +522,7 @@ memory.md  过去长期记下了什么：蒸馏后的长期记忆快照
 **向量检索**用硅基流动的 `BAAI/bge-m3`，先按主体/关系过滤，再按余弦相似度排序：
 
 - **独立配置**：`embedding_base_url` / `embedding_model` / `embedding_api_key`（或 `MINIAGENT_EMBEDDING_*` / `SILICONFLOW_API_KEY`）与主对话 provider 完全分开。没有 key 时向量通道自动关闭，检索返回空结果并在进程内提示一次；`--mock` 模式同样不启用、不发请求。
-- **混合检索**：查询先做本地关键词识别——命中 `rel` 词表（我爸 / 家人 / 同事 / 邻居 …）或点名了条目的 `subject` 时，先把候选收窄到对应卡片，再算余弦。只做字符串匹配，不额外调模型；识别不到就退回全量余弦，与改造前一致。
+- **混合检索**：查询先做本地关系词匹配——命中 `rel` 词表（我爸 / 家人 / 同事 / 邻居 …）或点名了条目的 `subject` 时，先把候选收窄到对应卡片，再算余弦。只做字符串匹配，不额外调模型；识别不到就退回全量余弦，与改造前一致。
 - **补足**：过滤后不足 `top_k` 时放开过滤、按余弦补足，并优先保留过滤命中项；任何情况下都不会"过滤一轮直接返回空"。
 - **存储**：向量写在 `embeddings.jsonl`，每条带模型名与维度；记忆条目本身仍是 `memory.jsonl`。纯 Python 余弦，不引入 numpy / faiss。条目 ID 只由 `kind + text + created_at` 决定，新增卡片字段不会触发索引重建。
 - **重建判定**：读到不同模型名、记录内维度不一致，或查询向量维度与索引不一致时，整份索引作废重建。文件里坏行按"索引需要重建"处理，不静默使用脏向量。
@@ -521,18 +530,19 @@ memory.md  过去长期记下了什么：蒸馏后的长期记忆快照
 - **失败行为**：单次请求超时 5s（`MINIAGENT_EMBEDDING_TIMEOUT`），超时/网络错误/429/5xx 只重试一次；仍失败就返回空结果并写 `memory_embedding` trace，4xx 不重试。不抛异常，也不影响记忆写入与蒸馏。
 - **可观测**：`memory_embedding` 记录 `hits`、`ms`、`degraded`、`rebuilt`、`added`、模型名、降级 `reason`，以及本轮是否过滤（`filtered=0/1`）、过滤条件（`filter=subject=…,rel=…`）与补足条数（`filled`）；写入路径额外带 `phase=write`。
 
-**消歧评测（29 条记忆 / 28 条查询，`tests/data/memory_disambiguation.json`）**：
+**消歧评测（29 条记忆 / 28 条查询，其中 27 条单条期望查询计入消歧正确率；`tests/data/memory_disambiguation.json`）**：
 
 | 向量后端 | 通道 | recall@3 | recall@5 | 消歧正确率 |
 | --- | --- | --- | --- | --- |
-| `BAAI/bge-m3`（SiliconFlow 真实接口） | 纯向量（基线） | 1.000 | 1.000 | 0.926 |
-| `BAAI/bge-m3`（SiliconFlow 真实接口） | 混合（subject/rel 过滤） | 1.000 | 1.000 | **0.963** |
-| `offline-char-bigram-1024`（离线确定性向量） | 纯向量（基线） | 1.000 | 1.000 | 0.852 |
-| `offline-char-bigram-1024`（离线确定性向量） | 混合（subject/rel 过滤） | 1.000 | 1.000 | **0.963** |
+| `BAAI/bge-m3`（SiliconFlow 真实接口） | 纯向量（基线） | 1.000 | 1.000 | 0.93 |
+| `BAAI/bge-m3`（SiliconFlow 真实接口） | 混合（subject/rel 过滤） | 1.000 | 1.000 | **0.96** |
+| `offline-char-bigram-1024`（离线确定性向量） | 纯向量（基线） | 1.000 | 1.000 | 0.85 |
+| `offline-char-bigram-1024`（离线确定性向量） | 混合（subject/rel 过滤） | 1.000 | 1.000 | **0.96** |
 
+- **结论**：27 条标注查询的消歧正确率 **0.93 → 0.96**；recall@3 / recall@5 在两种通道下都是 1.000，已到评测集上限。
 - **离线口径**：字符 n-gram 哈希向量，无网络、无 key、逐位可复现，用于 CI 与离线复跑；它不是语义模型，跨后端数字不可直接比较。
 - **真实口径**：29 条记忆一次批量 + 28 条查询单独请求，共 29 次调用 / 57 条文本；29 条记忆批量 0.62–0.78s，28 条查询合计 7.58–8.07s（平均 271–290ms，最大 487–578ms）；`embeddings.jsonl` 663,551 字节（dim=1024）。两次干净复跑数字完全一致。
-- **失败如实记录**：首次真实运行出现一次查询嵌入瞬时失败（q17），检索按设计返回空，基线 recall@3/@5 记为 0.964、消歧正确率不变；随后两次复跑无失败，固化的是干净口径。评测脚本会把每次调用失败打印出来，不会用离线结果顶替。
+- **失败如实记录**：首次真实运行出现一次查询嵌入瞬时失败（q17），检索按设计返回空；随后两次复跑无失败且数字一致，固化的是干净口径。评测脚本会把每次调用失败打印出来，不会用离线结果顶替。
 - **两个口径的差别**：bge-m3 基线在"同名不同人"子集是 0.800 → 混合 0.900，仍错的 q03「我女儿班主任那边的会安排在什么时候？」两种模式都错——查询没有点名"李老师"，只给了关系词，`rel=家人` 候选里"我女儿…兴趣班"更贴近；这属于 subject 别名缺失，不是过滤失效。离线基线该子集 0.700 → 1.000。q07（两个刘工：同事 / 本人）bge-m3 与离线基线都错，混合都修正。
 
 复现：`uv run python tools/memory_eval.py --check tests/data/memory_disambiguation_baseline.json`（默认离线）；有 `SILICONFLOW_API_KEY` 时加 `--embedder siliconflow` 复测真实口径，`--check` 会按当前后端自动选择对应固化数字。
@@ -583,7 +593,7 @@ system prompt 固定声明“标记内是数据不是指令”。会话历史与
 ## 架构
 
 ```
-CLI (cli.py)                 参数 / REPL / 事件渲染 / trace 子命令 / 退出码
+CLI (cli.py) / Web (web.py)  参数 / REPL / SSE / 审批 API / trace 子命令 / 退出码
   |
 Agent (agent.py)             多轮循环 / 轮次上限 / 工具调度 / trace 埋点 / 事件回调
   |-- LLMProvider (llm.py)    Protocol；Mock 与 OpenAI 兼容实现
@@ -591,10 +601,13 @@ Agent (agent.py)             多轮循环 / 轮次上限 / 工具调度 / trace 
   |-- ToolRegistry            Schema 导出 / 参数校验 / 执行与错误兜底
   |     |-- builtin.py        read_file / write_file / run_shell
   |     |     `-- security.py 路径白名单 / 危险命令黑名单
-  |     `-- web.py            web_search / web_fetch（SSRF 防护 / HTML 转文本）
+  |     `-- tools/web.py      web_search / web_fetch（SSRF 防护 / HTML 转文本）
   |-- Session (session.py)    JSONL 追加写入 / 加载 / 列举
   |-- checkpoint.py           工具调用 start/end 记录 / 半截状态恢复 / 幂等判定
   |-- memory.py               记忆存储 / 混合检索（向量 + subject/rel 过滤）/ 攒批蒸馏 / 记忆门
+  |-- embeddings.py           bge-m3 客户端 / 纯 Python 余弦 / embeddings.jsonl 索引
+  |-- planner.py              结构化计划 / 本地校验 / 重规划
+  |-- snapshot.py             高危操作前 git 快照 / 回滚
   |-- guard.py                注入启发式规则 / 外部数据标注与拦截
   |-- hitl.py                 工具拦截规则 / 交互抽象 / 决策记录
   |-- soul.py                 人格 / 用户画像文件定位与默认值
@@ -605,7 +618,7 @@ Agent (agent.py)             多轮循环 / 轮次上限 / 工具调度 / trace 
   `-- logging.py              固定字段 trace / 回放数据源
 ```
 
-依赖单向向下：CLI → Agent → Provider / 工具抽象；工具实现不依赖 Agent。Agent 只发出事件，不负责打印，接入 HTTP/SSE 服务时无需改循环。
+依赖单向向下：CLI → Agent → Provider / 工具抽象；工具实现不依赖 Agent。Agent 只发出事件，不负责打印，因此 CLI 与网页端可以共用同一个循环。网页端只有服务端 `web.py`（HTTP + SSE + 审批 API）和单页 `web_index.html`（原生 JS，消息用 `textContent` 渲染），不引入前端构建链。
 
 核心数据结构：
 
@@ -613,7 +626,7 @@ Agent (agent.py)             多轮循环 / 轮次上限 / 工具调度 / trace 
 - `ToolCall`：`id` / `name` / `arguments`（保留原始 JSON 字符串，先校验再解析）。
 - `AgentEvent`：`text` / `text_delta` / `text_end` / `tool_start` / `tool_end` / `context_trimmed` / `hitl` / `error`。
 - `TraceRecord`：`ts` / `session_id` / `turn` / `event` / `tool` / `duration_ms` / `prompt_tokens` / `completion_tokens` / `ok` / `error_code` / `detail`。
-- `MemoryEntry`：`kind`（fact / event）/ `text` / `created_at` / `session_id`。
+- `MemoryEntry`：`kind`（fact / event）/ `text` / `created_at` / `session_id`，以及可选的 `subject` / `rel` / `backstory`。
 - `GateDecision`：`search`（是否检索）/ `reason`（model / parse_failed / provider_error）。
 
 ## 岗位能力映射
@@ -635,7 +648,7 @@ Agent (agent.py)             多轮循环 / 轮次上限 / 工具调度 / trace 
 | 可观测性与 trace 回放 | `logging.py`、`cli.py` 的 `trace_main` | `tests/test_logging.py` |
 | 路径白名单与命令黑名单 | `security.py`、`tools/builtin.py` | `tests/test_security.py` |
 | 联网搜索、抓取与 SSRF 防护 | `tools/web.py` | `tests/test_web_tools.py` |
-| 记忆写入、中文检索与门控 | `memory.py`、`agent.py` 的 `_memory_note` / `_remember` | `tests/test_memory.py` |
+| 记忆写入、向量检索、subject/rel 消歧与门控 | `memory.py`、`embeddings.py`、`agent.py` 的 `_memory_note` / `_remember` | `tests/test_memory.py`、`tests/test_memory_hybrid.py`、`tests/test_memory_eval.py` |
 | 提示词注入防护 | `guard.py`、`agent.py` 的 `_guard_context` | `tests/test_guard.py` |
 | 人格、用户画像与长期记忆快照 | `soul.py`、`memory.py` 的 `snapshot`、`agent.py` 的 `default_system_prompt` / `_memory_snapshot` | `tests/test_memory.py`、`tests/test_context_layers.py` |
 | 接口设计与模块边界 | `tools/base.py`、`llm.py` 的 Protocol | `tests/test_tools.py` |
@@ -683,7 +696,7 @@ for tool in [*builtin_tools(policy), ListDirTool()]:
 8. **可靠性放在单进程内**：令牌桶与退避都是进程内实现，不引 Redis/MQ；多进程部署时它是下限，需要全局限流再替换 `TokenBucket` 即可，接口不变。
 9. **日志只记元数据**：trace 不写对话正文、工具参数/输出与密钥，换取"可回放又不泄露隐私"；排查粒度到轮次、工具、耗时与错误码。
 10. **安全边界放在工具层**：路径策略由工具构造参数注入，Agent 与 Provider 不感知；新增工具可以按需复用，也可显式选择不挂策略（测试与库调用场景）。
-11. **记忆是文件，向量索引也是文件**：`memory.jsonl` + `memory.md` 可直接阅读、grep 和手工迁移；`embeddings.jsonl` 只是可删除、可重建的派生索引，不引入向量库。排序只有余弦一路，关键词只用于按 `subject` / `rel` 收窄候选，不参与打分；没配 key、`--mock` 或请求失败时返回空结果并记 trace，也不影响写入与蒸馏。
+11. **记忆是文件，向量索引也是文件**：`memory.jsonl` + `memory.md` 可直接阅读、grep 和手工迁移；`embeddings.jsonl` 只是可删除、可重建的派生索引，不引入向量库。排序只有余弦一路，字符串匹配只用于按 `subject` / `rel` 收窄候选，不参与打分；没配 key、`--mock` 或请求失败时返回空结果并记 trace，也不影响写入与蒸馏。
 12. **写入攒批、失败保留**：每轮立即蒸馏会放大成本与噪声，也会在失败时丢数据；因此先落 pending，攒够批次再蒸馏，失败原样保留。
 13. **门失败倾向放行**：漏查一次记忆的代价通常高于多查一次；判定异常时宁可注入无关记忆，也不让模型失忆。
 14. **注入防护以结构隔离为主、规则为辅**：把外部内容标成数据比追着话术写正则更耐打；正则只用来提供低成本信号，并明确承认挡不住改写与编码绕过。用户输入不拦不改，避免把“忽略上面的回答”这类正常指令误判为攻击。
@@ -714,10 +727,13 @@ CI 配置在 [.github/workflows/ci.yml](.github/workflows/ci.yml)：push / PR �
 | M5 | soul.md 人格、记忆写入与检索、记忆门、提示词注入防护 | 完成（Mock 验收） |
 | M6 | Plan-and-Execute：结构化计划、本地校验、逐步执行与重规划 | 完成（Mock 验收） |
 | M7 | Human-in-the-loop：统一工具拦截、CLI/网页确认、信息补充、权限提示 | 完成（Mock 验收） |
+| M8 | 联网工具与会话工作目录：`web_search` / `web_fetch`、SSRF 防护、`--workdir` 白名单内切换 | 完成（Mock 验收） |
+| M9 | 短期对话窗口：`short_term_tokens` 整轮保留，裁剪与窗口分别记 trace | 完成（Mock 验收） |
 | M10 | 工具调用 checkpoint：start/end 落盘、半截状态恢复、幂等判定 | 完成（Mock 验收） |
 | M11 | 高危操作 git 快照：stash create 零污染、降级/拒绝、rollback 命令 | 完成（git 实测） |
 | M12 | 记忆向量检索：bge-m3 纯余弦排序、索引自检重建、失败返回空并记 trace | 完成（真实接口评测） |
-| M14 | 记忆混合检索：`subject` / `rel` / `backstory` 卡片字段、同名消歧过滤与补足、消歧评测集与对照数字 | 完成（离线评测复现） |
+| M13 | 故障恢复增强：恢复摘要（重试/状态码/降级项）、注入前轨迹体检、无进展循环检测 | 完成（Mock 验收） |
+| M14 | 记忆混合检索：`subject` / `rel` / `backstory` 卡片字段、同名消歧过滤与补足、消歧评测集与对照数字 | 完成（bge-m3 真实接口 + 离线复现） |
 
 ## 边界
 
