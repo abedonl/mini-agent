@@ -7,9 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from miniagent.errors import ToolError
+from miniagent.errors import ConfigError, ToolError
 from miniagent.llm import ToolCall
-from miniagent.security import PathPolicy, check_command
+from miniagent.scheduling import plan_calls
+from miniagent.security import PathPolicy, check_command, check_workdir
 from miniagent.tools import ToolRegistry
 from miniagent.tools.builtin import (
     MAX_WRITE_BYTES,
@@ -55,6 +56,63 @@ def test_policy_rejects_parent_escape(tmp_path: Path) -> None:
 
     with pytest.raises(ToolError, match="白名单"):
         PathPolicy([root]).resolve(str(root / ".." / "secret.txt"))
+
+
+def test_policy_resolves_relative_path_against_workdir(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    sub = root / "sub"
+    sub.mkdir(parents=True)
+    (sub / "note.txt").write_text("hi", encoding="utf-8")
+
+    policy = PathPolicy([root], workdir=sub)
+    assert policy.workdir == sub.resolve()
+    assert policy.resolve("note.txt") == (sub / "note.txt").resolve()
+    # 相对路径落在工作目录，白名单仍然只看授权根
+    assert ReadFileTool(policy).run({"path": "note.txt"}) == "hi"
+    with pytest.raises(ToolError, match="白名单"):
+        policy.resolve(str(tmp_path / "outside.txt"))
+
+
+def test_check_workdir_requires_existing_directory_inside_roots(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    good = root / "sub"
+    good.mkdir(parents=True)
+    assert check_workdir(good, [root]) == good.resolve()
+    assert check_workdir(str(good), [root]) == good.resolve()
+
+    (root / "file.txt").write_text("x", encoding="utf-8")
+    with pytest.raises(ConfigError, match="不是目录"):
+        check_workdir(root / "file.txt", [root])
+
+    with pytest.raises(ConfigError, match="不存在"):
+        check_workdir(root / "missing", [root])
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    with pytest.raises(ConfigError, match="授权根"):
+        check_workdir(outside, [root])
+    with pytest.raises(ConfigError, match="--allow-dir"):
+        check_workdir(outside, [root])
+
+
+def test_scheduling_compares_paths_against_workdir(tmp_path: Path) -> None:
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    calls = [
+        ToolCall("1", "read_file", json.dumps({"path": str(sub / "note.txt")})),
+        ToolCall("2", "write_file", json.dumps({"path": "note.txt", "content": "x"})),
+    ]
+    is_read = lambda name: name == "read_file"  # noqa: E731
+
+    # 相对写路径按 workdir 解析成 sub/note.txt，与绝对读路径重叠 → 降级串行
+    overlapped = plan_calls(calls, is_read, workdir=sub)
+    assert overlapped.serial == [0, 1]
+    assert overlapped.downgraded == 1
+
+    # 基准换成 tmp_path 后写路径是 tmp_path/note.txt，不再重叠 → 读可以并发
+    separated = plan_calls(calls, is_read, workdir=tmp_path)
+    assert separated.concurrent == [0]
+    assert separated.serial == [1]
 
 
 def test_read_file_tool_obeys_policy(tmp_path: Path) -> None:

@@ -8,6 +8,7 @@
 
 路径比较前统一按当前工作目录解析为绝对路径，并做真实路径与大小写归一化，
 避免同一个文件因相对/绝对、大小写或符号链接被漏判。
+工作目录可由 Agent 传入，保证与工具实际解析相对路径的基准一致。
 """
 
 from __future__ import annotations
@@ -44,8 +45,13 @@ class CallPlan:
         )
 
 
-def plan_calls(calls: list[ToolCall], is_read_only: Callable[[str], bool]) -> CallPlan:
+def plan_calls(
+    calls: list[ToolCall],
+    is_read_only: Callable[[str], bool],
+    workdir: str | Path | None = None,
+) -> CallPlan:
     """返回并发集合、串行集合与降级数量；索引始终对应原调用位置。"""
+    base = Path(workdir) if workdir else Path.cwd()
     total = len(calls)
     read_set = {index for index, call in enumerate(calls) if is_read_only(call.name)}
     reads = sorted(read_set)
@@ -65,7 +71,7 @@ def plan_calls(calls: list[ToolCall], is_read_only: Callable[[str], bool]) -> Ca
         if not path:
             barrier = "write_barrier"
             break
-        scopes.append(normalize_path(path))
+        scopes.append(normalize_path(path, base))
 
     if barrier:
         # 无法界定影响范围时整轮串行，避免读与不可预测的副作用竞争
@@ -84,7 +90,7 @@ def plan_calls(calls: list[ToolCall], is_read_only: Callable[[str], bool]) -> Ca
             serial_reads.append(index)
             reasons.add("unknown_read_scope")
             continue
-        path = normalize_path(raw)
+        path = normalize_path(raw, base)
         if any(paths_overlap(path, scope) for scope in scopes):
             serial_reads.append(index)
             reasons.add("path_overlap")
@@ -99,13 +105,13 @@ def plan_calls(calls: list[ToolCall], is_read_only: Callable[[str], bool]) -> Ca
     )
 
 
-def normalize_path(raw: str) -> str:
-    """相对路径按 cwd 绝对化，解析符号链接，Windows 下统一大小写与分隔符。"""
+def normalize_path(raw: str, base: str | Path | None = None) -> str:
+    """相对路径按 base（默认 cwd）绝对化，解析符号链接，Windows 下统一大小写与分隔符。"""
     if not raw:
         return ""
     path = Path(raw).expanduser()
     if not path.is_absolute():
-        path = Path.cwd() / path
+        path = (Path(base) if base else Path.cwd()) / path
     try:
         resolved = path.resolve(strict=False)
     except OSError:

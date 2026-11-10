@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from miniagent.errors import ConfigError, ProviderError
+from miniagent.errors import ConfigError, ProviderError, RecoverySummary
 from miniagent.reliability import RetryPolicy, TokenBucket, is_retryable_status
 
 
@@ -152,9 +152,15 @@ def _chunk_text(text: str, size: int = 16) -> list[str]:
 class _RetryableError(Exception):
     """内部信号：这次失败值得重试，不直接暴露给上层。"""
 
-    def __init__(self, message: str, retry_after: float | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        retry_after: float | None = None,
+        status: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.retry_after = retry_after
+        self.status = status
 
 
 def _retry_after_seconds(response: httpx.Response) -> float | None:
@@ -171,7 +177,7 @@ def _retry_after_seconds(response: httpx.Response) -> float | None:
 def _raise_http_error(status_code: int, body: str, retry_after: float | None) -> None:
     message = f"模型请求失败 HTTP {status_code}：{body[:300]}"
     if is_retryable_status(status_code):
-        raise _RetryableError(message, retry_after=retry_after)
+        raise _RetryableError(message, retry_after=retry_after, status=status_code)
     raise ProviderError(message)
 
 
@@ -235,9 +241,16 @@ class OpenAICompatProvider:
             )
         except ProviderError as exc:
             if emitted:
-                raise ProviderError(f"流式输出中断，已保留部分内容：{exc}") from exc
+                message = f"流式输出中断，已保留部分内容：{exc}"
+                raise ProviderError(message, recovery=exc.recovery) from exc
             # 一个字都没收到：沿用降级策略，再试一次非流式
-            return self._with_retry(lambda: self._chat_once(payload))
+            try:
+                return self._with_retry(lambda: self._chat_once(payload))
+            except ProviderError as fallback_exc:
+                summary = fallback_exc.recovery or RecoverySummary()
+                summary.degraded.append("流式失败后降级为非流式")
+                fallback_exc.recovery = summary
+                raise
 
     def _with_retry(
         self,
@@ -248,7 +261,9 @@ class OpenAICompatProvider:
         """每次尝试前先过令牌桶；只在可重试错误上退避重来。"""
         attempts = max(1, self._retry.max_attempts)
         last: _RetryableError | None = None
+        used = 0
         for attempt in range(1, attempts + 1):
+            used = attempt
             self._limiter.acquire()
             try:
                 return call()
@@ -258,7 +273,12 @@ class OpenAICompatProvider:
                     break
                 self._retry.sleep(self._retry.delay_for(attempt, exc.retry_after))
         assert last is not None
-        raise ProviderError(str(last)) from last
+        summary = RecoverySummary(
+            attempts=used,
+            last_status=last.status,
+            last_error=str(last)[:200],
+        )
+        raise ProviderError(str(last), recovery=summary) from last
 
     def _headers(self) -> dict[str, str]:
         return {

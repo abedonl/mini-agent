@@ -42,7 +42,9 @@ class TraceRecord:
     ts: float
     session_id: str
     turn: int
-    event: str  # run_start | request | response | tool | schedule | trim | error | run_end
+    # run_start | request | response | tool | schedule | trim | hitl | error | run_end
+    # | checkpoint | checkpoint_recover
+    event: str
     tool: str = ""
     duration_ms: int = 0
     prompt_tokens: int = 0
@@ -144,7 +146,10 @@ def format_record(record: TraceRecord) -> str:
             tail += f" code={record.error_code}"
         return f"{head} {tail}"
     if record.event in {"request", "trim", "run_start"}:
-        return f"{head} prompt≈{record.prompt_tokens} tokens"
+        line = f"{head} prompt≈{record.prompt_tokens} tokens"
+        if record.detail:
+            line += f" | {record.detail}"
+        return line
     if record.event == "response":
         return f"{head} {record.duration_ms}ms completion≈{record.completion_tokens} tokens"
     if record.event == "error":
@@ -159,6 +164,19 @@ def format_record(record: TraceRecord) -> str:
         return f"{head} {record.tool} {record.detail}"
     if record.event == "schedule":
         return f"{head} {record.detail}"
+    if record.event in {
+        "plan",
+        "plan_step",
+        "plan_review",
+        "plan_fallback",
+        "plan_verify",
+        "hitl",
+    }:
+        status = "" if record.ok else " failed"
+        tail = f"{status} {record.detail}".rstrip()
+        if record.duration_ms:
+            tail += f" {record.duration_ms}ms"
+        return f"{head} {tail}"
     if record.event in {"memory_gate", "memory_hit"}:
         return f"{head} {record.detail}"
     if record.event.startswith("memory"):
