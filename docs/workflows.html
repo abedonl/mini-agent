@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>miniagent 工作流全景 · 代码级</title>
+<style>
+  :root {
+    --bg: #f5f7fb;
+    --card: #ffffff;
+    --ink: #0f172a;
+    --muted: #5b667a;
+    --line: #dbe2ee;
+    --blue: #2563eb;
+    --blue-bg: #eff6ff;
+    --teal: #0f766e;
+    --teal-bg: #ecfdf5;
+    --amber: #b45309;
+    --amber-bg: #fffbeb;
+    --orange: #c2410c;
+    --orange-bg: #fff7ed;
+    --red: #b91c1c;
+    --red-bg: #fef2f2;
+    --green: #15803d;
+    --green-bg: #f0fdf4;
+    --violet: #6d28d9;
+    --violet-bg: #f5f3ff;
+    --slate-bg: #f1f5f9;
+    --shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 8px 24px -18px rgba(15, 23, 42, .35);
+    --mono: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(900px 420px at 10% -10%, #e0ecff 0%, transparent 60%),
+      radial-gradient(800px 380px at 100% 0%, #e7fbf4 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .hero {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 56px 28px 24px;
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    letter-spacing: .12em;
+    color: var(--blue);
+    text-transform: uppercase;
+    font-weight: 700;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 26px;
+    height: 2px;
+    background: var(--blue);
+    border-radius: 2px;
+  }
+  h1 {
+    margin: 14px 0 10px;
+    font-size: clamp(28px, 4.2vw, 46px);
+    line-height: 1.18;
+    letter-spacing: -.02em;
+  }
+  .lede { max-width: 820px; color: var(--muted); font-size: 16px; margin: 0 0 18px; }
+  .hero-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 11px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .75);
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+  .pill b { color: var(--ink); }
+  .toc {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, .72);
+    backdrop-filter: blur(6px);
+  }
+  .toc a {
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: #334155;
+    background: #fff;
+    border: 1px solid var(--line);
+  }
+  .toc a:hover { border-color: #b8c7e3; background: var(--blue-bg); text-decoration: none; }
+  .toc a b { color: var(--blue); margin-right: 4px; }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 8px 28px 80px; }
+  section {
+    margin: 26px 0;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .sec-head {
+    padding: 22px 26px 16px;
+    border-bottom: 1px solid #eef2f8;
+    background: linear-gradient(180deg, #fcfdff 0%, #ffffff 100%);
+  }
+  .sec-kicker {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 7px;
+    background: var(--ink);
+    color: #fff;
+    font: 700 12px/1 var(--mono);
+  }
+  .route { color: #64748b; font-family: var(--mono); font-size: 11.5px; }
+  h2 { margin: 8px 0 6px; font-size: 23px; letter-spacing: -.01em; }
+  .sec-sub { margin: 0; color: var(--muted); font-size: 14px; }
+
+  .body { padding: 24px 26px 28px; }
+
+  .legend {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 10px;
+    margin: 0 0 18px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fbfcff;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; margin-top: 4px; flex: 0 0 auto; }
+  .swatch.blue { background: var(--blue); }
+  .swatch.teal { background: var(--teal); }
+  .swatch.amber { background: var(--amber); }
+  .swatch.orange { background: var(--orange); }
+  .swatch.red { background: var(--red); }
+  .swatch.green { background: var(--green); }
+  .swatch.violet { background: var(--violet); }
+
+  .flow { display: flex; flex-direction: column; }
+  .node {
+    position: relative;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--blue);
+    border-radius: 12px;
+    background: #fff;
+    padding: 13px 15px 12px;
+  }
+  .node.core { border-left-color: var(--blue); background: linear-gradient(180deg, #ffffff, #f8faff); }
+  .node.io { border-left-color: #64748b; background: #fbfcfe; }
+  .node.mem { border-left-color: var(--teal); background: linear-gradient(180deg, #ffffff, #f7fdfb); }
+  .node.risk { border-left-color: var(--red); background: linear-gradient(180deg, #ffffff, #fffafa); }
+  .node.exit { border-left-color: var(--green); background: linear-gradient(180deg, #ffffff, #f8fdf9); }
+  .node.plan { border-left-color: var(--violet); background: linear-gradient(180deg, #ffffff, #fbfaff); }
+  .node-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .step {
+    font: 700 11px/1 var(--mono);
+    color: #fff;
+    background: #94a3b8;
+    padding: 4px 6px;
+    border-radius: 5px;
+  }
+  .node.core .step { background: var(--blue); }
+  .node.mem .step { background: var(--teal); }
+  .node.risk .step { background: var(--red); }
+  .node.exit .step { background: var(--green); }
+  .node.plan .step { background: var(--violet); }
+  .node.io .step { background: #64748b; }
+  .node-title { font-weight: 700; font-size: 14.5px; }
+  .file-tag {
+    margin-left: auto;
+    font: 11.5px/1.4 var(--mono);
+    color: #475569;
+    background: var(--slate-bg);
+    border: 1px solid #e2e8f0;
+    padding: 3px 7px;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+  .fn {
+    font: 12.5px/1.6 var(--mono);
+    color: #1d4ed8;
+    background: #f6f8ff;
+    border: 1px dashed #cdd9f5;
+    border-radius: 7px;
+    padding: 6px 9px;
+    margin: 6px 0 5px;
+    overflow-wrap: anywhere;
+  }
+  .node.mem .fn { color: #0f766e; background: #f4fdfa; border-color: #bfe8dd; }
+  .node.risk .fn { color: #b91c1c; background: #fff8f8; border-color: #f3cccc; }
+  .node.plan .fn { color: #6d28d9; background: #faf8ff; border-color: #ddd3fa; }
+  .node.exit .fn { color: #15803d; background: #f7fdf9; border-color: #c9eed6; }
+  .node.io .fn { color: #475569; background: #f8fafc; border-color: #dbe3ec; }
+  .desc { color: var(--muted); font-size: 12.8px; margin: 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  .chip.ok { color: var(--green); background: var(--green-bg); border-color: #bbf7d0; }
+  .chip.warn { color: var(--amber); background: var(--amber-bg); border-color: #fde68a; }
+  .chip.bad { color: var(--red); background: var(--red-bg); border-color: #fecaca; }
+  .chip.degrade { color: var(--orange); background: var(--orange-bg); border-color: #fed7aa; }
+  .chip.info { color: var(--blue); background: var(--blue-bg); border-color: #bfdbfe; }
+  .chip.mem { color: var(--teal); background: var(--teal-bg); border-color: #a7f3d0; }
+  .chip.plan { color: var(--violet); background: var(--violet-bg); border-color: #ddd6fe; }
+  .chip.plain { color: #475569; background: var(--slate-bg); border-color: #e2e8f0; }
+
+  .arrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 34px;
+    padding-left: 22px;
+    color: #94a3b8;
+    font-size: 12px;
+  }
+  .arrow .glyph { font: 700 16px/1 var(--mono); color: #94a3b8; }
+  .arrow em {
+    font-style: normal;
+    color: #64748b;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+
+  .diverge {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 10px;
+    margin: 10px 0;
+  }
+  .case {
+    border: 1px solid var(--line);
+    border-top: 3px solid #94a3b8;
+    border-radius: 10px;
+    background: #fff;
+    padding: 10px 12px;
+  }
+  .case.ok { border-top-color: var(--green); background: #fbfefc; }
+  .case.warn { border-top-color: var(--amber); background: #fffdf6; }
+  .case.bad { border-top-color: var(--red); background: #fffafa; }
+  .case.degrade { border-top-color: var(--orange); background: #fffaf5; }
+  .case.info { border-top-color: var(--blue); background: #fafcff; }
+  .case.plan { border-top-color: var(--violet); background: #fcfbff; }
+  .case b { display: block; font-size: 12.5px; margin-bottom: 3px; }
+  .case.ok b { color: var(--green); }
+  .case.warn b { color: var(--amber); }
+  .case.bad b { color: var(--red); }
+  .case.degrade b { color: var(--orange); }
+  .case.info b { color: var(--blue); }
+  .case.plan b { color: var(--violet); }
+  .case span { font-size: 12.3px; color: var(--muted); }
+  .case code { font-family: var(--mono); font-size: 11.8px; color: #334155; }
+
+  .lanes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+    margin: 10px 0;
+  }
+  .lane {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fbfcff;
+    padding: 12px 13px;
+  }
+  .lane h3 { margin: 0 0 4px; font-size: 12.5px; color: #334155; letter-spacing: .02em; }
+  .lane p { margin: 0; font-size: 12.3px; color: var(--muted); }
+  .lane code { font-family: var(--mono); font-size: 11.8px; color: #1d4ed8; }
+
+  .note {
+    margin: 14px 0 0;
+    padding: 11px 13px;
+    border-left: 3px solid #93c5fd;
+    border-radius: 0 8px 8px 0;
+    background: #f8fbff;
+    color: #475569;
+    font-size: 12.6px;
+  }
+  .note b { color: var(--ink); }
+
+  .overview {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    align-items: stretch;
+    padding: 4px 0;
+  }
+  .ov-row { display: grid; gap: 10px; }
+  .ov-row.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ov-row.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ov-row.one { grid-template-columns: minmax(0, 1fr); }
+  .ov-box {
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    background: #fff;
+    padding: 11px 13px;
+    box-shadow: 0 1px 0 rgba(15, 23, 42, .02);
+  }
+  .ov-box .k { font: 700 10.5px/1 var(--mono); color: #fff; background: #94a3b8; padding: 3px 5px; border-radius: 4px; margin-right: 6px; }
+  .ov-box b { font-size: 13px; }
+  .ov-box p { margin: 4px 0 0; font-size: 11.8px; color: var(--muted); }
+  .ov-box.cli { border-top: 3px solid #64748b; }
+  .ov-box.web { border-top: 3px solid var(--violet); }
+  .ov-box.asm { border-top: 3px solid var(--blue); }
+  .ov-box.react { border-top: 3px solid var(--blue); }
+  .ov-box.planb { border-top: 3px solid var(--violet); }
+  .ov-box.ctx { border-top: 3px solid var(--amber); }
+  .ov-box.memo { border-top: 3px solid var(--teal); }
+  .ov-box.rel { border-top: 3px solid var(--red); }
+  .ov-box.tool { border-top: 3px solid var(--green); }
+  .ov-box.rec { border-top: 3px solid var(--orange); }
+  .ov-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 7px 0;
+    color: #94a3b8;
+    font: 11.5px/1 var(--mono);
+  }
+  .ov-arrow::before, .ov-arrow::after {
+    content: "";
+    height: 1px;
+    flex: 1;
+    background: linear-gradient(90deg, transparent, #d6dfec);
+  }
+  .ov-arrow::after { background: linear-gradient(90deg, #d6dfec, transparent); }
+
+  .file-index {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .file-card {
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 9px 11px;
+    background: #fbfcff;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .file-card b { display: block; color: var(--ink); font: 700 12px/1.5 var(--mono); margin-bottom: 2px; }
+
+  footer {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 28px 70px;
+    color: #64748b;
+    font-size: 12.5px;
+  }
+  footer .rule { height: 1px; background: var(--line); margin: 8px 0 16px; }
+
+  @media (max-width: 760px) {
+    .hero, main, footer { padding-left: 16px; padding-right: 16px; }
+    .ov-row.two, .ov-row.three { grid-template-columns: minmax(0, 1fr); }
+    .file-tag { margin-left: 0; }
+    .body { padding: 18px 16px 22px; }
+    .sec-head { padding: 18px 16px 14px; }
+  }
+  @media print {
+    body { background: #fff; }
+    section { break-inside: avoid; box-shadow: none; }
+    .toc { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="eyebrow">miniagent · 当前工作区代码</div>
+  <h1>所有工作流，按实际函数与文件绘制</h1>
+  <p class="lede">
+    这不是概念图：每个节点都标了真正负责的函数名和文件，分叉按“正常 / 条件分支 / 降级 / 失败”分色。
+    节点顺序按代码实际执行顺序排列，跨图调用关系用“所属链路”标注。
+  </p>
+  <div class="hero-meta">
+    <span class="pill"><b>1</b> 张总览 + <b>9</b> 张工作流图</span>
+    <span class="pill">源码：<b>src/miniagent</b></span>
+    <span class="pill">入口：<b>CLI + Web(SSE)</b></span>
+    <span class="pill">运行时依赖：<b>httpx</b></span>
+  </div>
+  <nav class="toc">
+    <a href="#overview"><b>总览</b> 调用关系</a>
+    <a href="#w1"><b>W1</b> 启动装配与轨迹体检</a>
+    <a href="#w2"><b>W2</b> ReAct 主循环</a>
+    <a href="#w3"><b>W3</b> 计划模式</a>
+    <a href="#w4"><b>W4</b> 工具执行链</a>
+    <a href="#w5"><b>W5</b> 上下文装配</a>
+    <a href="#w6"><b>W6</b> 记忆</a>
+    <a href="#w7"><b>W7</b> 可靠性</a>
+    <a href="#w8"><b>W8</b> 失败与恢复</a>
+    <a href="#w9"><b>W9</b> CLI 与 Web</a>
+  </nav>
+</header>
+
+<main>
+
+<!-- ===================== 总览 ===================== -->
+<section id="overview">
+  <div class="sec-head">
+    <div class="sec-kicker">
+      <span class="num">MAP</span>
+      <span class="route">两条入口 → 同一 Agent → 三条横切链路</span>
+    </div>
+    <h2>总览：图与图之间的调用关系</h2>
+    <p class="sec-sub">W1 负责装配，W2/W3 是每轮的两条执行路径，W4 是工具落点；W5/W6/W7/W8 横切在所有轮次上，W9 是两个入口。新增的三条链路都挂在主链上：<b>轨迹体检</b>在 W1 末尾（每轮 <code>_build_context</code> 入口），<b>无进展检测</b>在 W2 工具回填之后，<b>恢复摘要</b>在 W7 抛出、W8/W9 呈现。</p>
+  </div>
+  <div class="body">
+    <div class="legend">
+      <div class="legend-item"><span class="swatch blue"></span><span><b>核心路径</b>：正常请求/循环</span></div>
+      <div class="legend-item"><span class="swatch violet"></span><span><b>计划分支</b>：plan_mode 打开</span></div>
+      <div class="legend-item"><span class="swatch teal"></span><span><b>记忆链路</b>：写入与检索</span></div>
+      <div class="legend-item"><span class="swatch amber"></span><span><b>条件分支</b>：开关/预算判定</span></div>
+      <div class="legend-item"><span class="swatch orange"></span><span><b>降级路径</b>：失败但继续</span></div>
+      <div class="legend-item"><span class="swatch red"></span><span><b>失败/终止</b>：错误或上限</span></div>
+      <div class="legend-item"><span class="swatch green"></span><span><b>正常出口</b>：可交付结果</span></div>
+    </div>
+
+    <div class="overview">
+      <div class="ov-row two">
+        <div class="ov-box cli"><span class="k">W9</span><b>CLI 入口</b><p><code>cli.main()</code> → <code>run_single()</code> / <code>run_repl()</code>；失败由 <code>format_error()</code> 带出恢复摘要</p></div>
+        <div class="ov-box web"><span class="k">W9</span><b>Web 入口</b><p><code>web._send_message()</code> → SSE 线程；失败由 <code>error_payload()</code> 带出恢复摘要</p></div>
+      </div>
+      <div class="ov-arrow">都汇合到 cli.make_agent()</div>
+      <div class="ov-row one">
+        <div class="ov-box asm"><span class="k">W1</span><b>装配与启动快照</b><p><code>make_agent()</code> → <code>Agent.__post_init__()</code> → <code>default_system_prompt()</code> + <code>_memory_snapshot()</code> + <code>recover_checkpoint()</code>（恢复兜底与每轮体检共用 <code>repair_pairing()</code>）</p></div>
+      </div>
+      <div class="ov-arrow">Agent.run()</div>
+      <div class="ov-row two">
+        <div class="ov-box react"><span class="k">W2</span><b>ReAct 主循环</b><p><code>_react_loop()</code>：模型 ↔ 工具；每轮工具回填后 <code>_check_no_progress()</code> 止损，无 tool_calls 或 max_turns 结束</p></div>
+        <div class="ov-box planb"><span class="k">W3</span><b>计划模式</b><p><code>_run_plan()</code> → <code>_execute_plan()</code> → <code>_verify_plan()</code>；失败回退 W2</p></div>
+      </div>
+      <div class="ov-arrow">两条路径共用 _build_context() 与 _run_tools()</div>
+      <div class="ov-row three">
+        <div class="ov-box ctx"><span class="k">W5</span><b>上下文装配</b><p><code>_build_context()</code>：<code>repair_pairing()</code> 体检 → <code>compress_messages()</code> → <code>apply_short_term_window()</code></p></div>
+        <div class="ov-box memo"><span class="k">W6</span><b>记忆</b><p><code>_memory_note()</code> / <code>_remember()</code> → <code>MemoryStore</code>：<code>subject</code>/<code>rel</code> 过滤 + 向量余弦 top_k（不足放开补足）+ <code>memory.md</code> 沉淀视图</p></div>
+        <div class="ov-box rel"><span class="k">W7</span><b>可靠性</b><p><code>llm._with_retry()</code>：令牌桶 + 退避 → 失败装 <code>RecoverySummary</code> 抛出</p></div>
+      </div>
+      <div class="ov-arrow">_run_tools()</div>
+      <div class="ov-row one">
+        <div class="ov-box tool"><span class="k">W4</span><b>工具执行链</b><p><code>ToolRegistry.execute()</code> → HITL → <code>GitSnapshotter.capture()</code> → <code>Checkpoint.begin()</code> → <code>tool.run()</code> → <code>Checkpoint.finish()</code></p></div>
+      </div>
+      <div class="ov-arrow">会话落盘 / trace / 进程退出 / --resume</div>
+      <div class="ov-row one">
+        <div class="ov-box rec"><span class="k">W8</span><b>失败与恢复</b><p><code>recover_checkpoint()</code> 三种分支；<code>ProviderError.recovery</code>（attempts / last_status / degraded）经 <code>cli.format_error()</code>、<code>web.error_payload()</code> 呈现给用户</p></div>
+      </div>
+    </div>
+
+    <div class="file-index">
+      <div class="file-card"><b>agent.py</b>主循环、计划、上下文视图、记忆注入、工具调度</div>
+      <div class="file-card"><b>cli.py / web.py</b>两个入口与装配</div>
+      <div class="file-card"><b>tools/registry.py</b>工具执行链唯一入口</div>
+      <div class="file-card"><b>memory.py / embeddings.py</b>记忆沉淀、检索与索引</div>
+      <div class="file-card"><b>compress.py / context.py</b>压缩与短期窗口</div>
+      <div class="file-card"><b>checkpoint.py / snapshot.py</b>恢复与 git 回滚</div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== W1 ===================== -->
+<section id="w1">
+  <div class="sec-head">
+    <div class="sec-kicker">
+      <span class="num">W1</span>
+      <span class="route">入口（W9）→ 装配 → Agent 就绪 → W2/W3；每轮再回 _build_context()</span>
+    </div>
+    <h2>启动与上下文装配</h2>
+    <p class="sec-sub">配置加载、会话建立/恢复、soul/user 与记忆快照进入 system prompt 的完整顺序；末尾是每轮请求视图入口的轨迹体检。</p>
+  </div>
+  <div class="body">
+    <div class="flow">
+      <div class="node io">
+        <div class="node-head"><span class="step">01</span><span class="node-title">解析入口与参数</span><span class="file-tag">cli.py:498 · main()</span></div>
+        <div class="fn">main() → build_parser().parse_args() → load_config()</div>
+        <p class="desc">先拦 <code>trace</code> / <code>rollback</code> 子命令；其余参数用 <code>dataclasses.replace</code> 覆盖 config（模型、轮次、soul/user、memory-dir、开关等）。</p>
+        <div class="chips"><span class="chip plain">--config</span><span class="chip plain">--soul / --user</span><span class="chip plain">--no-memory</span><span class="chip plain">--plan-mode / --plan-verify</span><span class="chip plain">--no-progress / --no-progress-repeat</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>cli.py:565</em></div>
+      <div class="node io">
+        <div class="node-head"><span class="step">02</span><span class="node-title">建立或恢复会话</span><span class="file-tag">session.py · Session</span></div>
+        <div class="fn">Session.load(args.resume, session_dir) / Session.create(directory=session_dir)</div>
+        <p class="desc">有 <code>--resume</code> 就加载历史 JSONL，否则新建会话；会话 id 同时作为 trace 与 checkpoint 的命名空间。</p>
+        <div class="chips"><span class="chip info">--resume</span><span class="chip plain">新进程 / 新 Agent</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>cli.py:294</em></div>
+      <div class="node core">
+        <div class="node-head"><span class="step">03</span><span class="node-title">make_agent 固定装配顺序</span><span class="file-tag">cli.py:294 · make_agent()</span></div>
+        <div class="fn">TraceLogger → Checkpoint.for_session() → build_registry() → GitSnapshotter → build_provider() → load_soul() + load_user_profile() → MemoryStore() → HITL handler → Agent()</div>
+        <p class="desc">
+          <code>build_registry</code> 注入授权目录、Tavily key、workdir；<code>snapshot=on</code> 才挂 git 快照器；
+          <code>MemoryStore</code> 同时拿到 <code>batch_size</code>、<code>embedder</code>（无 key/mock 时为 None）与降级原因；
+          HITL 在非交互模式下用 <code>AutoDenyHandler</code>。
+        </p>
+        <div class="chips"><span class="chip mem">记忆可用</span><span class="chip degrade">无 key → embedder=None</span><span class="chip degrade">--mock → 不启用向量</span><span class="chip warn">HITL off/on</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:160</em></div>
+      <div class="node core">
+        <div class="node-head"><span class="step">04</span><span class="node-title">Agent 初始化：prompt + 恢复</span><span class="file-tag">agent.py:160 · __post_init__()</span></div>
+        <div class="fn">system_prompt = default_system_prompt(...) → self.recovery = recover_checkpoint()</div>
+        <p class="desc">system prompt 只在创建时组装一次；随后执行 checkpoint 恢复（详见 W8）。恢复项由 <code>make_agent()</code> 在返回前逐条打印（cli.py:367），Web 端不打印、只进 trace。恢复末尾的配对兜底与每轮体检<b>调用同一个</b> <code>repair_pairing()</code>。</p>
+        <div class="chips"><span class="chip plan">只组装一次</span><span class="chip degrade">恢复失败不阻断启动</span><span class="chip mem">与体检同函数</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:1484</em></div>
+      <div class="node core">
+        <div class="node-head"><span class="step">05</span><span class="node-title">system prompt 分段顺序</span><span class="file-tag">agent.py:1484 · default_system_prompt()</span></div>
+        <div class="fn">① soul → ② ## 用户画像 → ③ ## 长期记忆快照 → ④ 当前工作目录 → ⑤ 工具清单 → ⑥ 安全约束</div>
+        <p class="desc">
+          ① soul 与 ② user 都是整文件注入、<b>无字符预算</b>，空则省略；
+          ③ 记忆快照预算 <b>2000 字符</b>（<code>memory_snapshot_chars</code>），超预算按 偏好 &gt; 项目事实 &gt; 待办 &gt; 事件 逐条保留；
+          快照和检索注入都不占 <code>short_term_tokens</code>。
+        </p>
+        <div class="chips"><span class="chip info">soul 无预算</span><span class="chip info">user 无预算</span><span class="chip mem">memory.md ≤ 2000</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:1283</em></div>
+      <div class="node mem">
+        <div class="node-head"><span class="step">06</span><span class="node-title">记忆快照读取与逐行防护</span><span class="file-tag">agent.py:1283 · _memory_snapshot()</span></div>
+        <div class="fn">MemoryStore.snapshot(limit) → PromptGuard.scan(line) → 命中行丢弃 + trace prompt_guard</div>
+        <p class="desc">只读 <code>memory.md</code> 的沉淀视图；文件不存在或为空时返回空字符串，不影响启动。</p>
+        <div class="chips"><span class="chip mem">memory.md</span><span class="chip degrade">文件不存在 → 空层</span><span class="chip bad">命中注入规则 → 丢行</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>cli.py:372 / 389</em></div>
+      <div class="node exit">
+        <div class="node-head"><span class="step">07</span><span class="node-title">进入单次执行或 REPL</span><span class="file-tag">cli.py:372 · run_single() / 389 · run_repl()</span></div>
+        <div class="fn">run_single(agent, prompt) / run_repl(agent, ...) → Agent.run(text)</div>
+        <p class="desc">网页端不经过这两个函数，而是在 <code>web._send_message()</code> 里直接构造 Agent 并调用 <code>run</code>（见 W9）。</p>
+        <div class="chips"><span class="chip ok">进入 W2 / W3</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:629 · 每轮都走</em></div>
+      <div class="node core">
+        <div class="node-head"><span class="step">08</span><span class="node-title">轨迹体检：注入前配对修复</span><span class="file-tag">agent.py:629 · _build_context() → context.py:78 · repair_pairing()</span></div>
+        <div class="fn">repaired = repair_pairing(self.messages) → PairingReport(messages, filled, dropped_calls, dropped_results)</div>
+        <p class="desc">
+          W2/W3 每次构建请求视图都先做这一步：<b>补齐</b> <code>assistant.tool_calls</code> 后面缺失的 tool 结果（占位文本注明是补的）、
+          <b>丢弃</b>没有名字的工具调用（调用全空时该 assistant 降级为普通文本）、<b>丢弃</b>找不到对应调用的孤儿 tool 结果。
+          函数<b>幂等</b>，重复执行结果一致；返回新列表，<b>只改本次注入副本</b>，不写回会话与 checkpoint。发生修复时记 <code>pairing</code> trace。
+        </p>
+        <div class="chips"><span class="chip ok">幂等</span><span class="chip plain">只改注入副本</span><span class="chip mem">recover_checkpoint() 复用同一函数</span></div>
+      </div>
+    </div>
+    <div class="note">
+      <b>两处调用同一套规则：</b>每轮 <code>_build_context()</code>（agent.py:629）与启动恢复的兜底（agent.py:387）都调 <code>repair_pairing()</code>；
+      区别只在占位文本——后者用 <code>_missing_tool_text</code>，让模型知道这条结果是断点恢复补的，不是工具真的跑过。
+    </div>
+  </div>
+</section>
+
+<!-- ===================== W2 ===================== -->
+<section id="w2">
+  <div class="sec-head">
+    <div class="sec-kicker">
+      <span class="num">W2</span>
+      <span class="route">W1 → Agent.run() → 本图 → W4 / W5 / W6 / W7</span>
+    </div>
+    <h2>ReAct 主循环</h2>
+    <p class="sec-sub">请求 → 流式输出 → tool_calls → 工具执行 → 回填 → 无进展检测 → 下一轮，直到自然结束、无进展终止或达到最大轮次。</p>
+  </div>
+  <div class="body">
+    <div class="flow">
+      <div class="node core">
+        <div class="node-head"><span class="step">01</span><span class="node-title">每轮入口</span><span class="file-tag">agent.py:444 · run()</span></div>
+        <div class="fn">self._append(user) → _memory_note(user_input) → trace run_start → plan_mode == "on" ? _run_plan : _react_loop</div>
+        <p class="desc">记忆门与检索在进入循环前做一次（W6）；无进展计数器也在这里清零。计划模式返回 None 时仍回退到 <code>_react_loop</code>。</p>
+        <div class="chips"><span class="chip mem">W6 检索注入</span><span class="chip plan">plan_mode=on → W3</span><span class="chip info">否则本图</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:461</em></div>
+      <div class="node core">
+        <div class="node-head"><span class="step">02</span><span class="node-title">轮次循环与前缀</span><span class="file-tag">agent.py:461 · _react_loop()</span></div>
+        <div class="fn">for turn in 1..max_turns: _build_context(memory_note, turn) → trace request</div>
+        <p class="desc"><code>_build_context</code> 先做 <code>repair_pairing</code> 轨迹体检，再压缩、短期窗口、记忆注入、注入防护（见 W1 步骤 08 / W5）；每轮都重新构建请求视图，不改写会话历史。</p>
+        <div class="chips"><span class="chip warn">W5 压缩</span><span class="chip mem">memory_note 仅本次请求</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>llm.py:213</em></div>
+      <div class="node core">
+        <div class="node-head"><span class="step">03</span><span class="node-title">调用模型（可流式）</span><span class="file-tag">llm.py:213 · OpenAICompatProvider.chat()</span></div>
+        <div class="fn">provider.chat(context, specs, on_text=on_text) → _with_retry() → _chat_stream() / _chat_once()</div>
+        <p class="desc">流式增量通过 <code>on_text</code> 转换成 <code>AgentEvent(kind="text_delta")</code>；失败与重试在 W7。ProviderError 向上抛出，本轮以 error trace 结束。</p>
+        <div class="chips"><span class="chip ok">text_delta 流式</span><span class="chip degrade">流式失败且未输出 → 非流式重试</span><span class="chip bad">ProviderError → 抛出</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:505</em></div>
+      <div class="diverge">
+        <div class="case ok"><b>没有 tool_calls → 自然结束</b><span><code>_append(assistant)</code> → <code>_remember()</code> → <code>trace run_end</code> → <code>RunResult(ok=True)</code>。<br>这是唯一进入记忆写入的正常收尾（W6）。</span></div>
+        <div class="case info"><b>有 tool_calls → 执行工具</b><span><code>_append(assistant, tool_calls)</code> → 每个调用发 <code>tool_start</code> → <code>_run_tools(calls, turn)</code>（W4）→ 回填 tool 消息 → <b>无进展检测</b> → 进入下一轮。</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:528 · 工具回填之后</em></div>
+      <div class="node risk">
+        <div class="node-head"><span class="step">04</span><span class="node-title">无进展检测</span><span class="file-tag">agent.py:577 · _check_no_progress() / 1379 · _progress_fingerprint()</span></div>
+        <div class="fn">digest = sha256(工具名 + 归一化参数 + 结果内容) → 与 _progress_last 比较 → _progress_count 累计或重置</div>
+        <p class="desc">
+          每次工具回填后对每个结果算指纹：相同则计数 +1，不同则把上一指纹换掉、计数重置为 1。
+          连续到 <code>no_progress_repeat</code>（默认 <b>3</b>）时先回填一条“换策略”提示继续跑；
+          <b>第 4 次</b>仍相同就直接终止，<code>error_code=no_progress</code>。开关 <code>no_progress=off</code> 时整段跳过。
+        </p>
+        <div class="chips"><span class="chip warn">第 3 次 → 提示换策略</span><span class="chip bad">第 4 次 → no_progress 终止</span><span class="chip plain">计数每次 run() 清零</span><span class="chip plain">记 no_progress trace</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↻</span><em>还有轮次 → 回到 02；否则 ↓</em></div>
+      <div class="node risk">
+        <div class="node-head"><span class="step">05</span><span class="node-title">达到最大轮次</span><span class="file-tag">agent.py:559</span></div>
+        <div class="fn">AgentEvent(kind="error") → trace error/run_end error_code=max_turns → RunResult(ok=False)</div>
+        <p class="desc">不会自动续跑；CLI 以非零退出码结束，Web 推送 <code>done {ok:false}</code>。</p>
+        <div class="chips"><span class="chip bad">max_turns 终止</span><span class="chip plain">默认 10 轮</span></div>
+      </div>
+    </div>
+    <div class="note">
+      <b>轮次不是“请求次数”而是“模型调用次数”。</b>一次模型返回多个 tool_calls 只消耗同一条轮次：全部执行并回填后，下一轮才继续请求模型。
+      <br><b>无进展与 max_turns 是两层：</b>前者在第 4 次相同指纹时提前止损（只止损，不改写历史），后者是轮次用尽后的最终兜底；两者互不替代，也都不会把失败包装成成功。
+    </div>
+  </div>
+</section>
+
+<!-- ===================== W3 ===================== -->
+<section id="w3">
+  <div class="sec-head">
+    <div class="sec-kicker">
+      <span class="num">W3</span>
+      <span class="route">W1 → Agent.run()（plan_mode=on）→ 本图 → W4；失败回退 W2</span>
+    </div>
+    <h2>计划模式</h2>
+    <p class="sec-sub">计划生成、一次修正、逐层执行、每步复盘、收尾校验；以及 plan / plan_verify 两个开关的组合差异。</p>
+  </div>
+  <div class="body">
+    <div class="flow">
+      <div class="node plan">
+        <div class="node-head"><span class="step">01</span><span class="node-title">生成计划</span><span class="file-tag">agent.py:706 · _run_plan()</span></div>
+        <div class="fn">_build_context(memory_note, turn=0) → build_plan_messages() → _call_planner() → provider.chat(messages, [])</div>
+        <p class="desc">计划阶段不传 tools，只允许产出 JSON；turn 固定为 0，避免和后续执行轮次混在一起。</p>
+        <div class="chips"><span class="chip plan">plan_mode=on</span><span class="chip plain">plan_max_steps</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>planner.py:184</em></div>
+      <div class="node plan">
+        <div class="node-head"><span class="step">02</span><span class="node-title">本地校验</span><span class="file-tag">planner.py:184 · parse_plan() / 115 · validate_steps()</span></div>
+        <div class="fn">parse_plan() → validate_steps()：步数上限、工具存在、参数 Schema、前序引用</div>
+        <p class="desc">校验完全本地完成，不额外调用模型；错误分类写进 trace。</p>
+        <div class="chips"><span class="chip ok">合法 → 执行</span><span class="chip warn">不合法 → 修正一次</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:741</em></div>
+      <div class="node plan">
+        <div class="node-head"><span class="step">03</span><span class="node-title">一次修正</span><span class="file-tag">planner.py:269 · build_repair_messages()</span></div>
+        <div class="fn">build_repair_messages(errors) → _call_planner() → parse_plan()</div>
+        <p class="desc">带着错误清单再问一次；仍不合法就放弃计划模式，不再无限纠错。</p>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:781</em></div>
+      <div class="diverge">
+        <div class="case degrade"><b>修正后仍不合法 → 回退 ReAct</b><span>trace <code>plan_fallback</code>，<code>_run_plan</code> 返回 <code>None</code>，<code>Agent.run</code> 转 <code>_react_loop</code>（W2）。</span></div>
+        <div class="case plan"><b>合法 → 进入执行</b><span><code>_execute_plan(check.plan, ...)</code>，step 数写进 <code>plan</code> trace。</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:799</em></div>
+      <div class="node plan">
+        <div class="node-head"><span class="step">04</span><span class="node-title">逐步执行 + 每步复盘</span><span class="file-tag">agent.py:799 · _execute_plan() / 1064 · _review_plan()</span></div>
+        <div class="fn">pop step → 合成 ToolCall(id=plan-N-index) → _run_tools([call]) → StepRun → _review_plan()</div>
+        <p class="desc">
+          每个计划步骤都走完整的 W4 工具执行链（HITL、快照、checkpoint 一样不少）。
+          <code>_review_plan</code> 返回 <code>finish</code> / <code>replan</code> / 继续；replan 次数受 <code>plan_max_replans</code>（默认 2）限制，超限记 <code>replan_limit</code> 后收尾。
+        </p>
+        <div class="chips"><span class="chip plan">每步单工具</span><span class="chip info">W4 全链</span><span class="chip warn">replan 可替换剩余步骤</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:847</em></div>
+      <div class="node plan">
+        <div class="node-head"><span class="step">05</span><span class="node-title">收尾答案与成败判定</span><span class="file-tag">agent.py:847 · _execute_plan() / planner.py:323 · summarize_run()</span></div>
+        <div class="fn">if not answer: summarize_run(done) → ok = finished or any(step.ok)</div>
+        <p class="desc">模型没有显式 finish 时，用步骤结果拼一个摘要；只要有一个步骤成功，先视为可交付，再交给可选的收尾校验。</p>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:852 · plan_verify == "on"</em></div>
+      <div class="diverge">
+        <div class="case info"><b>plan_verify = off（默认）</b><span>跳过校验，<code>verify_state="skipped"</code>，直接按 <code>ok</code> 收尾。</span></div>
+        <div class="case warn"><b>plan_verify = on</b><span>进入 <code>_verify_plan()</code>：原始意图 vs 实际工具证据。</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:884</em></div>
+      <div class="node plan">
+        <div class="node-head"><span class="step">06</span><span class="node-title">收尾校验循环</span><span class="file-tag">agent.py:884 · _verify_plan() / 914 · _run_verify_check()</span></div>
+        <div class="fn">build_verify_messages() → provider.chat(messages, []) → parse_verify(evidence_pool(done))</div>
+        <p class="desc">证据只能来自工具真实返回；计划文本和参数不算。校验调用本身失败时标记 <code>unavailable</code>，<b>不补充执行</b>。</p>
+        <div class="chips"><span class="chip ok">pass</span><span class="chip bad">fail → 可能补充执行</span><span class="chip degrade">unavailable → 不再动手</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:977 · fail 且未超轮次</em></div>
+      <div class="node plan">
+        <div class="node-head"><span class="step">07</span><span class="node-title">补充执行一轮</span><span class="file-tag">agent.py:977 · _supplement()</span></div>
+        <div class="fn">build_supplement_messages() → provider.chat() → _run_tools() → 再调 _run_verify_check()</div>
+        <p class="desc"><code>plan_verify_rounds</code> 控制最多补几轮（默认 1；0 表示不补）。补充调用没返回 tool_calls 判 <code>supplement_no_action</code>；provider 异常才判 <code>supplement_error</code>。</p>
+        <div class="chips"><span class="chip warn">rounds 上限</span><span class="chip degrade">无新证据 → 失败</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:861</em></div>
+      <div class="node exit">
+        <div class="node-head"><span class="step">08</span><span class="node-title">统一收尾</span><span class="file-tag">agent.py:861 · _execute_plan()</span></div>
+        <div class="fn">emit text → _append(assistant) → ok ? _remember() → trace run_end → RunResult</div>
+        <p class="desc">失败码：<code>verify_failed</code> / <code>verify_unavailable</code> / <code>plan_all_steps_failed</code>。</p>
+        <div class="chips"><span class="chip ok">ok → W6 记忆写入</span><span class="chip bad">verify 不过 → ok=False</span></div>
+      </div>
+    </div>
+    <div class="note">
+      <b>开关组合：</b><code>plan_mode=off</code> 时整张图不进入，直接走 W2；<code>plan_mode=on + plan_verify=off</code> 只执行不校验；
+      <code>plan_mode=on + plan_verify=on</code> 才包含 06–07。校验未通过不会把结果包装成成功。
+    </div>
+  </div>
+</section>
+
+<!-- ===================== W4 ===================== -->
+<section id="w4">
+  <div class="sec-head">
+    <div class="sec-kicker">
+      <span class="num">W4</span>
+      <span class="route">W2 / W3 → _run_tools() → 本图 → tool 消息回填</span>
+    </div>
+    <h2>工具执行链</h2>
+    <p class="sec-sub">调度顺序（只读并发 / 写串行 / 路径重叠降级 / 模型依赖分层）与单次执行的安全链。</p>
+  </div>
+  <div class="body">
+    <div class="flow">
+      <div class="node core">
+        <div class="node-head"><span class="step">01</span><span class="node-title">入口与并发判定</span><span class="file-tag">agent.py:1110 · _run_tools()</span></div>
+        <div class="fn">max_tool_workers &gt; 1 ? plan_calls() : CallPlan(serial=all) → tool_deps 判断</div>
+        <p class="desc">
+          <code>layered = tool_deps == "model" and workers &gt; 1 and len(calls) &gt; 1</code>；
+          否则走纯路径调度。单工具调用永远单层，不引入额外判定。
+        </p>
+        <div class="chips"><span class="chip info">多调用才调度</span><span class="chip plain">max_tool_workers</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>scheduling.py:48</em></div>
+      <div class="node core">
+        <div class="node-head"><span class="step">02</span><span class="node-title">路径调度计划</span><span class="file-tag">scheduling.py:48 · plan_calls()</span></div>
+        <div class="fn">plan_calls(calls, is_read_only, workdir) → CallPlan(concurrent / serial / downgraded / barrier)</div>
+        <p class="desc">
+          读-读可并发；读与写路径重叠（同路径或父子目录，<code>paths_overlap</code>）时该读降级串行；
+          写始终串行；<code>run_shell</code> 或无 path 的写视为全路径屏障。
+        </p>
+        <div class="chips"><span class="chip ok">读-读并发</span><span class="chip warn">路径重叠 → 读降级串行</span><span class="chip bad">run_shell → 整轮串行屏障</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:1114</em></div>
+      <div class="lanes">
+        <div class="lane">
+          <h3>tool_deps = "model"（默认，多调用）</h3>
+          <p><code>_layer_plan()</code> → <code>plan_layers()</code> → <code>DependencyJudge.judge()</code> 补语义依赖边；
+          <code>merge_edges()</code> 路径边优先、冲突模型边丢弃、检测环；<code>build_layers()</code> 生成拓扑层。</p>
+          <p style="margin-top:6px"><b>同层并发、层间串行：</b><code>_execute_layer()</code> 用 ThreadPoolExecutor。</p>
+        </div>
+        <div class="lane">
+          <h3>tool_deps = "off" 或单调用</h3>
+          <p><code>_execute_path_plan()</code>：先并发执行 <code>plan.concurrent</code> 的只读调用，再按原调用顺序串行执行 <code>plan.serial</code>。</p>
+          <p style="margin-top:6px"><b>没有模型判定调用</b>，延迟更低，但失去语义分层。</p>
+        </div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:1204 / 1241</em></div>
+      <div class="diverge">
+        <div class="case degrade"><b>判定层异常 / 屏障</b><span><code>_layer_plan</code> 捕获任何异常 → 整轮每调用一层（全串行），reason=<code>internal_error</code>；屏障直接按 <code>plan.reasons[0]</code> 串行。</span></div>
+        <div class="case ok"><b>正常分层</b><span>按层执行；结果仍写回原调用索引，顺序与模型请求一致。</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>tools/registry.py:100</em></div>
+      <div class="node risk">
+        <div class="node-head"><span class="step">03</span><span class="node-title">单次执行：唯一安全入口</span><span class="file-tag">tools/registry.py:100 · execute() / 138 · _execute()</span></div>
+        <div class="fn">execute() → _execute()：查找工具 → JSON 解析 → validate_args() → precheck() → HITL → snapshot → checkpoint.begin() → tool.run() → checkpoint.finish()</div>
+        <p class="desc">
+          <b>失败全部转成错误文本</b>回传模型，不终止进程；工具调用不自动重试。权限异常走 <code>PermissionDenied</code>。
+        </p>
+        <div class="chips"><span class="chip bad">未知工具 / 坏 JSON</span><span class="chip warn">缺参 → 可补充</span><span class="chip bad">HITL deny/blocked</span><span class="chip degrade">快照失败 → 拒绝执行</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>hitl.py:170 · review()</em></div>
+      <div class="node risk">
+        <div class="node-head"><span class="step">04</span><span class="node-title">HITL 确认与缺参补充</span><span class="file-tag">hitl.py:170 · HitlController.review() / InteractionHandler.ask()</span></div>
+        <div class="fn">review(ToolRequest(name, args, read_only, phase, missing)) → skipped / allow / deny / blocked</div>
+        <p class="desc">
+          先过安全边界（<code>precheck</code>）再问用户，避免确认注定被拒绝的操作；缺参阶段只补字符串参数，补完重新 <code>validate_args</code>。
+          CLI 用 <code>CliInteraction</code> 阻塞等待；非交互用 <code>AutoDenyHandler</code>；Web 用 <code>WebInteraction</code> 推 approval 事件。
+        </p>
+        <div class="chips"><span class="chip warn">phase=missing</span><span class="chip bad">deny → hitl_denied</span><span class="chip bad">blocked → permission_blocked</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>registry.py:196</em></div>
+      <div class="node risk">
+        <div class="node-head"><span class="step">05</span><span class="node-title">git 快照 + checkpoint start</span><span class="file-tag">snapshot.py:68 · GitSnapshotter.capture() / checkpoint.py:162 · begin()</span></div>
+        <div class="fn">_capture_snapshot(call, read_only) → GitSnapshotter.capture() → _checkpoint_begin() → Checkpoint.begin()</div>
+        <p class="desc">
+          只读工具跳过；非 git 仓库只提示一次并降级为只记元信息；<b>快照失败直接拒绝执行</b>，不带着无保护状态跑高危操作。
+          <code>start</code> 写在用户确认之后、真正执行之前。
+        </p>
+        <div class="chips"><span class="chip plain">read_only 跳过</span><span class="chip degrade">非 git → 仅元信息</span><span class="chip bad">快照失败 → 不执行</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>registry.py:200</em></div>
+      <div class="node core">
+        <div class="node-head"><span class="step">06</span><span class="node-title">执行与完成记录</span><span class="file-tag">tools/registry.py:200 · tool.run() → checkpoint.py:221 · finish()</span></div>
+        <div class="fn">output = tool.run(args) → _checkpoint_end() → Checkpoint.finish(status, summary, duration_ms)</div>
+        <p class="desc">异常时先落 <code>end{is_error:true}</code> 再原样抛出，由 <code>execute()</code> 兜底转成“工具执行失败：…”文本。</p>
+        <div class="chips"><span class="chip ok">ToolOutput 原样返回</span><span class="chip bad">异常 → 先 end 再上抛</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:1129</em></div>
+      <div class="node exit">
+        <div class="node-head"><span class="step">07</span><span class="node-title">按原顺序回填</span><span class="file-tag">agent.py:1129 · _run_tools()</span></div>
+        <div class="fn">for index, call in enumerate(calls): emit tool_end → trace tool → _record_hitl() → PromptGuard.scan() → _append(tool 消息)</div>
+        <p class="desc">并发只影响执行顺序，不影响结果顺序；每条结果都带 <code>tool_call_id</code>，下一轮模型看到的是完整闭环。</p>
+        <div class="chips"><span class="chip ok">原序回填</span><span class="chip bad">guard 命中 → 记 trace</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== W5 ===================== -->
+<section id="w5">
+  <div class="sec-head">
+    <div class="sec-kicker">
+      <span class="num">W5</span>
+      <span class="route">W2 / W3 → _build_context() → 本图 → provider.chat()</span>
+    </div>
+    <h2>上下文装配：体检、压缩、注入</h2>
+    <p class="sec-sub">先用 <code>repair_pairing()</code> 做轨迹体检，再四级压缩、短期窗口裁剪，最后注入本次记忆提示并做防护。</p>
+  </div>
+  <div class="body">
+    <div class="flow">
+      <div class="node core">
+        <div class="node-head"><span class="step">01</span><span class="node-title">请求视图入口</span><span class="file-tag">agent.py:629 · _build_context()</span></div>
+        <div class="fn">repaired = repair_pairing(self.messages) → view = repaired.messages → before = estimate_messages(view) → compress_messages(view, max_context_tokens, provider)</div>
+        <p class="desc">体检只产出新列表（补齐/丢弃配对），压缩只改请求视图，两者都不改会话历史；发生压缩时发 <code>context_trimmed</code> 事件并记 <code>trim</code> trace。</p>
+        <div class="chips"><span class="chip info">max_context_tokens 硬上限</span><span class="chip plain">字符近似估算 token</span><span class="chip mem">体检 → pairing trace</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>compress.py:77</em></div>
+      <div class="node io">
+        <div class="node-head"><span class="step">02</span><span class="node-title">先判是否超限</span><span class="file-tag">compress.py:77 · compress_messages()</span></div>
+        <div class="fn">if original &lt;= max_tokens: return 原样</div>
+        <p class="desc">没超限就零成本返回，不进入任何阶段。</p>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>超限</em></div>
+      <div class="node io">
+        <div class="node-head"><span class="step">03</span><span class="node-title">Stage 1 · 规则剪枝</span><span class="file-tag">compress.py:140 · prune()</span></div>
+        <div class="fn">prune(messages)：失效读取 / 重复结果 / 确认语 / 工具输出保头尾截断</div>
+        <p class="desc">成本最低，先做纯规则清理；达标（<code>stats.to_tokens &lt;= max_tokens</code>）立即停止。</p>
+        <div class="chips"><span class="chip ok">达标 → 返回</span><span class="chip info">未达标 ↓</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>compress.py:94</em></div>
+      <div class="node io">
+        <div class="node-head"><span class="step">04</span><span class="node-title">Stage 2 · 结构化折叠</span><span class="file-tag">compress.py:267 · structure()</span></div>
+        <div class="fn">structure(current)：工具调用模板折叠 / 结构化摘要</div>
+        <p class="desc">不调用模型；达标即停。</p>
+        <div class="chips"><span class="chip ok">达标 → 返回</span><span class="chip info">未达标 ↓</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>compress.py:101</em></div>
+      <div class="node io">
+        <div class="node-head"><span class="step">05</span><span class="node-title">Stage 3 · 模型摘要</span><span class="file-tag">compress.py:352 · summarize()</span></div>
+        <div class="fn">summarize(structured, provider, max_tokens, keep_turns) → (summarized, ok)</div>
+        <p class="desc">只有 <code>provider is not None</code> 才尝试；失败或压缩后不比原来小，都记为 fallback，丢弃摘要结果。</p>
+        <div class="chips"><span class="chip ok">摘要有效且达标 → 返回</span><span class="chip degrade">summary_failed</span><span class="chip degrade">summary_insufficient</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>compress.py:120</em></div>
+      <div class="node risk">
+        <div class="node-head"><span class="step">06</span><span class="node-title">Stage 4 · 硬裁兜底</span><span class="file-tag">context.py:160 · trim_messages()</span></div>
+        <div class="fn">trim_messages(structured, max_tokens, keep_turns) → stats.fallback = "&lt;原因&gt;+hard_trim"</div>
+        <p class="desc">摘要无效时回到 Stage 2 的结果再硬裁，绝不把无效摘要带进 system。</p>
+        <div class="chips"><span class="chip bad">硬裁</span><span class="chip plain">stats.stages 记录实际级别</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>context.py:216</em></div>
+      <div class="node core">
+        <div class="node-head"><span class="step">07</span><span class="node-title">短期窗口</span><span class="file-tag">context.py:216 · apply_short_term_window()</span></div>
+        <div class="fn">split_turns() → 从最近一轮向前加，超出 short_term_tokens 就停 → WindowResult(messages, stats)</div>
+        <p class="desc">以 user 消息切轮；assistant.tool_calls 与 tool 结果同进同出；<b>至少保留最近一轮</b>；system 与记忆注入不占额度。</p>
+        <div class="chips"><span class="chip warn">至少保留 1 轮</span><span class="chip plain">只改请求视图</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:699</em></div>
+      <div class="node mem">
+        <div class="node-head"><span class="step">08</span><span class="node-title">插入本次记忆提示</span><span class="file-tag">agent.py:699 · _build_context()</span></div>
+        <div class="fn">if memory_note: context = [Message(role="system", content=memory_note), *context]</div>
+        <p class="desc">只作用于本次请求，不写回会话；下一轮重新判定是否命中。</p>
+        <div class="chips"><span class="chip mem">W6 产出</span><span class="chip plain">不占短期预算</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:1269</em></div>
+      <div class="node exit">
+        <div class="node-head"><span class="step">09</span><span class="node-title">注入防护</span><span class="file-tag">agent.py:1269 · _guard_context()</span></div>
+        <div class="fn">PromptGuard.scan() / 外部数据来源标注 → 返回最终 context</div>
+        <p class="desc">工具输出、网页内容、记忆与快照在进入模型前统一包成不可信外部数据；命中规则按模式标注或丢弃。</p>
+        <div class="chips"><span class="chip ok">进入 provider.chat</span><span class="chip bad">命中 → 丢弃/标注 + trace</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== W6 ===================== -->
+<section id="w6">
+  <div class="sec-head">
+    <div class="sec-kicker">
+      <span class="num">W6</span>
+      <span class="route">W2 / W3 正常收尾 → 写入；W2/W3 每轮开头 → 检索；W1 启动 → 快照</span>
+    </div>
+    <h2>记忆：写入、沉淀与检索</h2>
+    <p class="sec-sub">写入侧：每轮入队 → 攒批蒸馏（顺带填 <code>subject</code> / <code>rel</code> / <code>backstory</code>）→ memory.jsonl → <code>_render_view()</code> 渲染 memory.md 沉淀视图（卡片条目带 <code>subject｜rel</code> 前缀）→ 蒸馏时批量生成向量；检索侧：记忆门 → 查询嵌入 → <b>按 subject/rel 收窄候选</b> → 余弦排序取 top_k（不足则放开补足）→ 注入。</p>
+  </div>
+  <div class="body">
+    <div class="legend">
+      <div class="legend-item"><span class="swatch teal"></span><span>记忆正常链路</span></div>
+      <div class="legend-item"><span class="swatch orange"></span><span>无向量 / 请求失败 / 索引空降级</span></div>
+      <div class="legend-item"><span class="swatch amber"></span><span>门槛与预算判定</span></div>
+    </div>
+
+    <div class="flow">
+      <div class="node exit">
+        <div class="node-head"><span class="step">01</span><span class="node-title">每轮入队</span><span class="file-tag">agent.py:1352 · _remember()</span></div>
+        <div class="fn">_remember(user_input, answer) → MemoryStore.record_turn()（memory.py:335）→ pending.jsonl 追加一行</div>
+        <p class="desc">ReAct 无 tool_calls 的正常结束、计划模式 <code>ok=True</code> 时才调用；失败/中止不写入。这一条只进 pending，不直接落 memory。</p>
+        <div class="chips"><span class="chip ok">成功收尾</span><span class="chip plain">pending.jsonl</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>memory.py:484</em></div>
+      <div class="node mem">
+        <div class="node-head"><span class="step">02</span><span class="node-title">攒批蒸馏</span><span class="file-tag">memory.py:484 · maybe_distill()</span></div>
+        <div class="fn">pending = pending() → if len &lt; batch_size: skipped → provider.chat([DISTILL_PROMPT, 对话]) → _parse_distilled()</div>
+        <p class="desc">默认 6 条攒一批；模型必须返回 JSON 数组（kind / text / subject / rel / backstory）。<code>DISTILL_PROMPT</code>（memory.py:100）要求偏好与人物关系类尽量填、事件类可留空、<b>填不出就留空、不许编造</b>；解析时空值和 <code>null</code> 都按空字符串处理。解析失败或 ProviderError → <code>failed</code>，pending 原样保留，下轮再试。</p>
+        <div class="chips"><span class="chip warn">&lt; batch_size → skipped</span><span class="chip ok">解析成功</span><span class="chip bad">解析/调用失败 → pending 保留</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>memory.py:512 · 逐条扫描</em></div>
+      <div class="node mem">
+        <div class="node-head"><span class="step">03</span><span class="node-title">写入时防护</span><span class="file-tag">memory.py:512 · PromptGuard.scan()</span></div>
+        <div class="fn">for item in items: guard.scan(text); flagged → last_dropped + continue</div>
+        <p class="desc">记忆会跨会话回流，命中注入规则的条目在写入时就丢弃，并记 <code>prompt_guard</code> trace；注入路径上还会再扫一次兜底。</p>
+        <div class="chips"><span class="chip bad">命中 → 丢弃</span><span class="chip mem">其余 → add()</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>memory.py:309</em></div>
+      <div class="node mem">
+        <div class="node-head"><span class="step">04</span><span class="node-title">结构化落盘</span><span class="file-tag">memory.py:309 · add()</span></div>
+        <div class="fn">MemoryEntry(kind, text, created_at, session_id, subject?, rel?, backstory?) → append memory.jsonl → _render_view()</div>
+        <p class="desc">memory.jsonl 是唯一事实来源；每次 <code>add()</code> 之后立刻重建视图。三个卡片字段可选，空值不落盘，旧条目不用迁移；条目 key 只由 <code>kind + text + created_at</code> 决定，补字段不会触发向量重建。</p>
+        <div class="chips"><span class="chip mem">memory.jsonl 追加</span><span class="chip plain">kind = fact / event</span><span class="chip plain">subject / rel / backstory 可缺</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>memory.py:584</em></div>
+      <div class="node mem">
+        <div class="node-head"><span class="step">05</span><span class="node-title">渲染跨会话沉淀视图</span><span class="file-tag">memory.py:584 · _render_view() / 617 · _write_view() / 648 · _view_line()</span></div>
+        <div class="fn">_merge_entries(entries) → _section_for(entry) → _conflict_subject(text) → _view_line() 卡片加 subject｜rel 前缀 → 分节成文 → 临时文件 + os.replace 原子替换 memory.md</div>
+        <p class="desc">
+          每次都从 <b>memory.jsonl 全量</b>重建，所以之前会话沉淀的内容不会丢；按 偏好 / 项目事实 / 待办 / 事件 分节，
+          同文去重、同主体（<code>X是Y</code>）冲突取新、每条带 id 前 8 位。
+          <b>卡片区</b>（有 subject/rel 的条目）渲染成 <code>- [id] 张医生｜家人｜…</code>，<b>流水区</b>（没有卡片字段）保持 <code>- [id] 正文</code> 原格式。
+          写失败只记 <code>memory_write</code>（<code>memory_view_write_failed</code>），条目已在 jsonl 里，下次写入会再渲染。
+        </p>
+        <div class="chips"><span class="chip mem">memory.md 沉淀视图</span><span class="chip ok">全量重建</span><span class="chip ok">卡片 / 流水两种格式</span><span class="chip degrade">视图写失败 → trace，不抛</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>memory.py:525 → 531</em></div>
+      <div class="node mem">
+        <div class="node-head"><span class="step">06</span><span class="node-title">清空 pending + 批量生成向量</span><span class="file-tag">memory.py:531 · _sync_embeddings()</span></div>
+        <div class="fn">pending_path.write_text("") → EmbeddingIndex.sync([(key, text)], embedder) → embeddings.jsonl（embeddings.py:227）</div>
+        <p class="desc">
+          蒸馏产出新条目后立刻批量补向量，检索时就不必重算历史；只补缺失项，模型名变化、维度不符或坏行会整份重建。
+          失败只写 <code>memory_embedding</code>（phase=write），不影响已经写入的记忆与视图。
+        </p>
+        <div class="chips"><span class="chip mem">embeddings.jsonl</span><span class="chip plain">bge-m3 · 维度以响应为准</span><span class="chip degrade">失败 → degraded trace</span><span class="chip degrade">embedder=None → 直接返回</span></div>
+      </div>
+    </div>
+
+    <div class="arrow"><span class="glyph">⇢</span><em>检索侧：每轮开头，只有一条路</em></div>
+
+    <div class="flow">
+      <div class="node mem">
+        <div class="node-head"><span class="step">07</span><span class="node-title">记忆门判定</span><span class="file-tag">agent.py:1314 · _memory_note() / memory.py:260 · MemoryGate.review()</span></div>
+        <div class="fn">decision = MemoryGate.review(gate_provider or provider, user_input) → GateDecision(search, reason)</div>
+        <p class="desc">一次便宜的小模型调用；判定失败（超时、空响应、非 YES/NO）倾向放行。结果写 <code>memory_gate</code> trace：<code>search</code> / <code>skip</code>。</p>
+        <div class="chips"><span class="chip ok">search → 继续</span><span class="chip warn">skip → 本轮不检索</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>memory.py:349</em></div>
+      <div class="node mem">
+        <div class="node-head"><span class="step">08</span><span class="node-title">查询嵌入</span><span class="file-tag">memory.py:349 · MemoryStore.search() → embeddings.py:103 · embed_one()</span></div>
+        <div class="fn">index.sync(entries) 补齐历史向量 → query_vector = embedder.embed_one(query)</div>
+        <p class="desc">正常路径下历史条目已在蒸馏时向量化，这里只请求查询这一条；首次启用或模型维度变更时才补历史。</p>
+        <div class="chips"><span class="chip mem">只嵌 query 一条</span><span class="chip plain">5s 超时 · 只重试 1 次</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>memory.py:349 → 173 · 嵌入前先收窄</em></div>
+      <div class="node mem">
+        <div class="node-head"><span class="step">09</span><span class="node-title">按 subject / rel 收窄候选</span><span class="file-tag">memory.py:173 · subject_filter() / 46 · REL_GROUPS</span></div>
+        <div class="fn">rels = 查询命中 REL_GROUPS（我爸 / 家人 / 同事 / 邻居 / 我的 …）→ subjects = 查询里点名的非角色型 subject → 同时收窄 → 候选为空则退回全量</div>
+        <p class="desc">
+          纯本地字符串匹配，不额外调模型。命中"我/公司"这类兜底词且同时点名了具体人物时只保留 subject 过滤；
+          只有"我的 / 我家 / 我自己"这种所有格才叠加 <code>rel</code>。<code>用户 / 家人 / 女儿</code> 等角色型 subject 不参与点名匹配，避免把"我女儿班主任"错误地收窄成"女儿"。
+          识别不到主体/关系时与改造前完全一致。
+        </p>
+        <div class="chips"><span class="chip warn">命中 → 先过滤</span><span class="chip plain">过滤为空 → 退回全量</span><span class="chip plain">不额外调模型</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>memory.py:218 · 候选内排序</em></div>
+      <div class="node mem">
+        <div class="node-head"><span class="step">10</span><span class="node-title">余弦排序取 top_k（不足则补足）</span><span class="file-tag">memory.py:218 · embedding_rank() / embeddings.py:53 · cosine()</span></div>
+        <div class="fn">score = cosine(query_vector, entry_vector) → 只保留 score &gt; 0 → 按 (score, created_at) 降序取前 top_k → 若过滤后不足 top_k：放开过滤、按余弦补足，过滤命中项优先</div>
+        <p class="desc">纯 Python 计算，没有向量库依赖；<code>top_k</code> 默认 3（<code>memory_top_k</code> 可调）。补足保证不会出现"过滤一轮直接返回空"。结果与过滤情况写进 <code>memory_embedding</code>：<code>filtered=0/1</code>、<code>filter=subject=…,rel=…</code>、<code>filled=N</code>。</p>
+        <div class="chips"><span class="chip mem">top_k 默认 3</span><span class="chip plain">纯 Python 余弦</span><span class="chip ok">不足 → 放开补足</span><span class="chip plain">filtered / filter / filled 进 trace</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:1329 · 过滤后</em></div>
+      <div class="node exit">
+        <div class="node-head"><span class="step">11</span><span class="node-title">注入本次请求</span><span class="file-tag">agent.py:1329 · _memory_note() → W5 步骤 08</span></div>
+        <div class="fn">逐条 PromptGuard.scan → 命中丢弃 → 拼成一条 system 消息（外部数据包裹）→ _build_context 插到最前</div>
+        <p class="desc">只作用于本次请求，不写回会话；下一轮重新判定是否命中。</p>
+        <div class="chips"><span class="chip mem">临时 system 消息</span><span class="chip bad">命中 → 丢弃 + trace</span><span class="chip plain">不占短期预算</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>降级分支（只影响检索）</em></div>
+      <div class="diverge">
+        <div class="case degrade"><b>无 key / --mock → 返回空</b><span><code>embedder is None</code> 或 <code>index is None</code>：写 <code>memory_embedding{degraded:1, reason=no_api_key / mock_mode / no_embedder}</code>，返回 <code>[]</code>，不抛异常。</span></div>
+        <div class="case degrade"><b>请求失败 → 返回空</b><span>超时 / 网络 / 4xx / 5xx、索引重建失败：<code>reason=embedding_request_failed</code>，返回 <code>[]</code>。</span></div>
+        <div class="case degrade"><b>索引空 → 返回空</b><span>还没有任何条目向量：<code>reason=index_empty</code>，返回 <code>[]</code>。</span></div>
+        <div class="case ok"><b>三条降级都只影响检索</b><span>写入、蒸馏、视图渲染与向量生成照常执行；这一轮只是“没有命中”。</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>memory.py:567 · 启动时另一条路径</em></div>
+      <div class="node mem">
+        <div class="node-head"><span class="step">12</span><span class="node-title">跨会话快照</span><span class="file-tag">memory.py:567 · snapshot() / agent.py:1283</span></div>
+        <div class="fn">snapshot(limit=2000) → _truncate_view() 按 偏好 &gt; 项目事实 &gt; 待办 &gt; 事件 整条截断 → 逐行 guard → system prompt 第 3 段</div>
+        <p class="desc">读的就是步骤 05 渲染出的 memory.md；新进程启动即可见之前会话的沉淀，与每轮检索注入是两条独立路径。</p>
+        <div class="chips"><span class="chip mem">读 memory.md</span><span class="chip warn">超 2000 字符按优先级整条截断</span><span class="chip bad">命中行丢弃</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== W7 ===================== -->
+<section id="w7">
+  <div class="sec-head">
+    <div class="sec-kicker">
+      <span class="num">W7</span>
+      <span class="route">横切：W2 / W3 的每次 provider.chat()</span>
+    </div>
+    <h2>可靠性：错误分类、退避重试、令牌桶</h2>
+    <p class="sec-sub">只重试模型请求，不重试工具；区分可重试错误与请求本身的 4xx；最终失败时把重试次数、最后状态码与降级项装进 <code>RecoverySummary</code> 抛给上层。</p>
+  </div>
+  <div class="body">
+    <div class="flow">
+      <div class="node core">
+        <div class="node-head"><span class="step">01</span><span class="node-title">每次尝试先限速</span><span class="file-tag">reliability.py:52 · TokenBucket.acquire()</span></div>
+        <div class="fn">acquire()：按 rate_per_minute 匀速补令牌；预计等待 &gt; max_wait(30s) → ProviderError</div>
+        <p class="desc">令牌桶是进程内实现，线程安全；<code>rate_per_minute &lt;= 0</code> 表示关闭限流（Mock 默认关闭）。</p>
+        <div class="chips"><span class="chip warn">默认 60 RPM</span><span class="chip bad">等待 &gt; 30s → 明确报错</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>llm.py:289 / 323</em></div>
+      <div class="node core">
+        <div class="node-head"><span class="step">02</span><span class="node-title">发起请求并分类</span><span class="file-tag">llm.py:289 · _chat_once() / 323 · _chat_stream()</span></div>
+        <div class="fn">httpx.TimeoutException / TransportError → _RetryableError；HTTP ≥400 → _raise_http_error()</div>
+        <p class="desc">超时、连接失败、408/429/5xx 可重试；其余 4xx（400/401/403/404）立即 ProviderError，不浪费重试。</p>
+        <div class="chips"><span class="chip degrade">超时/网络 → 可重试</span><span class="chip degrade">408/429/5xx → 可重试</span><span class="chip bad">其他 4xx → 不重试</span><span class="chip bad">响应格式错 → 不重试</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>reliability.py:86</em></div>
+      <div class="node core">
+        <div class="node-head"><span class="step">03</span><span class="node-title">计算下一次等待</span><span class="file-tag">reliability.py:86 · RetryPolicy.delay_for()</span></div>
+        <div class="fn">retry_after 优先（clamp 到 max_delay）→ 否则 base × 2^(attempt-1) + 50% 抖动</div>
+        <p class="desc"><code>Retry-After</code> 从响应头读取（<code>_retry_after_seconds</code>），最多等到 <code>max_delay=8s</code>；默认最多 3 次尝试（含首次）。</p>
+        <div class="chips"><span class="chip warn">尊重 Retry-After</span><span class="chip plain">指数退避 + 抖动</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>llm.py:255</em></div>
+      <div class="diverge">
+        <div class="case ok"><b>还有次数 → 重试</b><span><code>_with_retry</code> 循环：流式场景只有“尚未输出任何文本”才允许重试，避免重复输出。</span></div>
+        <div class="case bad"><b>次数用尽 → 抛 ProviderError</b><span><code>_with_retry</code> 把重试次数、最后状态码与最后错误装进 <code>RecoverySummary</code>（errors.py:9），随 <code>ProviderError.recovery</code> 一起抛出。</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>agent.py:619 · 补本轮降级项</em></div>
+      <div class="node risk">
+        <div class="node-head"><span class="step">04</span><span class="node-title">恢复摘要透出</span><span class="file-tag">agent.py:619 · _attach_recovery() / errors.py:9 · RecoverySummary</span></div>
+        <div class="fn">recovery = ProviderError.recovery → attempts / last_status / last_error；_attach_recovery() 追加本轮 degraded 项（流式降级、记忆降级、压缩失败等）</div>
+        <p class="desc">
+          摘要不只在 trace 里：CLI 由 <code>format_error()</code>（cli.py:459）打印“重试 N 次 / 最后状态 / 降级项”，
+          Web 由 <code>error_payload()</code>（web.py:69）放进 SSE <code>error</code> 事件的 JSON。两者读的是同一份对象，措辞不重复实现。
+        </p>
+        <div class="chips"><span class="chip bad">attempts</span><span class="chip bad">last_status</span><span class="chip degrade">degraded[]</span><span class="chip info">CLI + Web 同一份</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>对比：工具调用</em></div>
+      <div class="node risk">
+        <div class="node-head"><span class="step">05</span><span class="node-title">工具不自动重试</span><span class="file-tag">tools/registry.py:100 · execute()</span></div>
+        <div class="fn">ToolRegistry.execute() 每次只调用一次 tool.run()；失败作为 tool 消息回传</div>
+        <p class="desc">写工具可能有副作用，是否重试交给模型判断；恢复靠 checkpoint（W8），不是盲目重跑。</p>
+        <div class="chips"><span class="chip bad">工具失败 → 回传不重试</span><span class="chip plain">由模型决定下一步</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== W8 ===================== -->
+<section id="w8">
+  <div class="sec-head">
+    <div class="sec-kicker">
+      <span class="num">W8</span>
+      <span class="route">W1 启动恢复；CLI rollback 子命令；所有降级路径的收口</span>
+    </div>
+    <h2>失败与恢复</h2>
+    <p class="sec-sub">checkpoint 三种恢复分支、git 回滚入口、模型失败后的恢复摘要呈现，以及系统里所有“失败但继续”的降级路径。</p>
+  </div>
+  <div class="body">
+    <div class="flow">
+      <div class="node risk">
+        <div class="node-head"><span class="step">01</span><span class="node-title">启动时恢复</span><span class="file-tag">agent.py:221 · recover_checkpoint()</span></div>
+        <div class="fn">if checkpoint is None or session is None: return []；否则读 finished() 与 pending()</div>
+        <p class="desc">只在有会话与 checkpoint 时执行；<code>--resume</code> 时修复“开始后、完成前”被杀留下的半截状态。补完消息后还会跑一次 <code>repair_pairing()</code>（agent.py:387），与每轮 <code>_build_context</code> 用的是同一个函数。</p>
+        <div class="chips"><span class="chip bad">无 checkpoint → 不恢复</span><span class="chip plain">--resume 触发</span><span class="chip mem">复用 repair_pairing()</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>checkpoint.py:261 / 257</em></div>
+      <div class="diverge">
+        <div class="case ok"><b>有 end、无 tool 消息</b><span><code>finished()</code> 找到完成记录 → 用 <code>end.summary</code> 补一条 tool 消息（注明原始输出未落盘）→ 标记 <code>completed / message_missing</code>。<b>绝不重复执行。</b></span></div>
+        <div class="case info"><b>只有 start，只读工具</b><span><code>pending()</code> + <code>replay=safe</code> → 重新执行一次，得到当前真实结果。</span></div>
+        <div class="case warn"><b>只有 start，写工具</b><span>先按幂等键判定是否已生效：能确认就补“已完成”，否则补“状态未知”，<b>不重试</b>。</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>checkpoint.py:265</em></div>
+      <div class="node risk">
+        <div class="node-head"><span class="step">02</span><span class="node-title">标记已解决</span><span class="file-tag">checkpoint.py:265 · Checkpoint.resolve()</span></div>
+        <div class="fn">resolve(pending, action=..., summary=...) → 追加一条解决记录</div>
+        <p class="desc">恢复动作本身写 <code>checkpoint_recover</code> trace，包含 action / reason / status。</p>
+        <div class="chips"><span class="chip plain">completed</span><span class="chip warn">message_present</span><span class="chip degrade">state_unknown</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>cli.py:478 · rollback_main()</em></div>
+      <div class="node risk">
+        <div class="node-head"><span class="step">03</span><span class="node-title">git 回滚入口</span><span class="file-tag">cli.py:478 / snapshot.py:206 · rollback_snapshots()</span></div>
+        <div class="fn">miniagent rollback &lt;session_id&gt; --to &lt;seq&gt; → list_snapshots() → rollback_snapshots() → restore_snapshot()</div>
+        <p class="desc">
+          只恢复已跟踪文件；要求工作目录是 git 仓库、工作区干净（<code>--force</code> 才跳过脏检查）。
+          实际命令：<code>git restore --source=&lt;sha&gt; --worktree -- .</code>。
+        </p>
+        <div class="chips"><span class="chip bad">非 git / 脏工作区 → 拒绝</span><span class="chip warn">--force 覆盖</span><span class="chip plain">只恢复已跟踪文件</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>ProviderError.recovery（W7）</em></div>
+      <div class="node risk">
+        <div class="node-head"><span class="step">04</span><span class="node-title">恢复摘要呈现</span><span class="file-tag">errors.py:9 · RecoverySummary / cli.py:459 · format_error() / web.py:69 · error_payload()</span></div>
+        <div class="fn">recovery = err.recovery → attempts / last_status / last_error / degraded[] → 人读文本（CLI）或 JSON（Web SSE）</div>
+        <p class="desc">
+          模型请求最终失败时，用户看到的不只是一句报错：重试了几次、最后 HTTP 状态是什么、这一轮有哪些降级项（流式降级、记忆不可用、压缩退回硬裁等）。
+          CLI 与 Web 读同一份 <code>RecoverySummary</code>，只是渲染成文本或 JSON；缺字段时按“未知”处理，不编造。
+        </p>
+        <div class="chips"><span class="chip bad">attempts</span><span class="chip bad">last_status</span><span class="chip degrade">degraded[]</span><span class="chip info">用户可见，不只 trace</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>各链路的降级收口</em></div>
+      <div class="node risk">
+        <div class="node-head"><span class="step">05</span><span class="node-title">降级路径总表</span><span class="file-tag">跨模块</span></div>
+        <div class="fn">流式失败 → 非流式；摘要失败 → 硬裁；无向量 → 空检索；非 git → 仅元信息；模型依赖失败 → 串行；工具失败 → 错误文本；HITL 无交互 → 拒绝</div>
+        <p class="desc">所有降级都“继续主流程 + 留 trace + 进 RecoverySummary.degraded”，不把异常包装成成功；只有安全边界与快照失败会直接拒绝执行。</p>
+        <div class="chips"><span class="chip degrade">llm.py 流式降级</span><span class="chip degrade">compress.py hard_trim</span><span class="chip degrade">memory.py 返回空</span><span class="chip degrade">dependencies.py 全串行</span><span class="chip bad">registry.py 安全拒绝</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>退出码 / SSE</em></div>
+      <div class="node exit">
+        <div class="node-head"><span class="step">06</span><span class="node-title">错误对用户可见</span><span class="file-tag">cli.py:205 · render_event() / web.py:613 · error_payload()</span></div>
+        <div class="fn">CLI：format_error() + 非零退出码；Web：SSE error（含恢复摘要）→ done {ok:false}</div>
+        <p class="desc">CLI 按错误分类渲染；Web 统一 <code>redact()</code> 后推 <code>error</code>，再补一条 <code>done</code>，页面不会一直转圈。</p>
+        <div class="chips"><span class="chip bad">退出码 ≠ 0</span><span class="chip plain">SSE error + done</span><span class="chip degrade">degraded 一并带出</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== W9 ===================== -->
+<section id="w9">
+  <div class="sec-head">
+    <div class="sec-kicker">
+      <span class="num">W9</span>
+      <span class="route">进程入口 → W1 装配 → W2/W3 → W4；结果回到终端或 SSE</span>
+    </div>
+    <h2>两个入口：CLI 与 Web（SSE）</h2>
+    <p class="sec-sub">同一套 Agent，两种承载方式；网页端只是把 AgentEvent 转成 SSE 事件。</p>
+  </div>
+  <div class="body">
+    <div class="lanes">
+      <div class="lane">
+        <h3>CLI</h3>
+        <p><code>cli.main()</code> → <code>load_config()</code> → <code>Session.load/create</code> → <code>make_agent()</code> → <code>run_single()</code> / <code>run_repl()</code> → <code>Agent.run()</code>。</p>
+        <p style="margin-top:6px">事件回调 <code>render_event(event)</code> 直接把 <code>text_delta / tool_start / tool_end / hitl / error</code> 打到终端；斜杠命令走 <code>run_repl()</code> 自己的分支（<code>/tools</code>、<code>/sessions</code>、<code>/resume</code>、<code>/clear</code>、<code>/exit</code>）。</p>
+        <p style="margin-top:6px"><b>中断安全：</b>每轮消息即时写会话 JSONL；<code>Ctrl+C</code> 不破坏已落盘历史。</p>
+      </div>
+      <div class="lane">
+        <h3>Web</h3>
+        <p><code>web.main()</code> → 只监听 <code>127.0.0.1</code> 的 ThreadingHTTPServer → <code>POST /api/sessions/{id}/messages</code> → <code>_send_message()</code>。</p>
+        <p style="margin-top:6px">请求线程先定格“配置 + 该会话开关”快照，再起 daemon 线程执行 <code>make_agent(... interaction=WebInteraction)</code> 与 <code>agent.run()</code>；主线程持续读队列并写 SSE。</p>
+        <p style="margin-top:6px">事件：<code>meta</code> → <code>text / tool_start / tool_end / approval / hitl</code> → <code>done</code> 或 <code>error</code>；空闲时发 <code>: ping</code> 心跳；断开连接会取消挂起的人工确认。</p>
+      </div>
+    </div>
+    <div class="flow" style="margin-top:14px">
+      <div class="node core">
+        <div class="node-head"><span class="step">01</span><span class="node-title">CLI 事件渲染</span><span class="file-tag">cli.py:205 · render_event()</span></div>
+        <div class="fn">Agent.on_event = render_event → 文本增量直接写 stdout；工具开始/结束打印名称、参数摘要、耗时</div>
+        <p class="desc">不缓存整段回答，流式输出边到边打；错误事件同时决定退出码。</p>
+        <div class="chips"><span class="chip ok">流式可见</span><span class="chip plain">工具过程可见</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>web.py:560 · work()</em></div>
+      <div class="node core">
+        <div class="node-head"><span class="step">02</span><span class="node-title">Web 工作线程</span><span class="file-tag">web.py:524 · _send_message() / 560 · work()</span></div>
+        <div class="fn">make_agent(config, session=..., interaction=WebInteraction) → agent.on_event = queue.put → agent.run(text)</div>
+        <p class="desc">每轮使用请求开始时的配置快照；执行中切换开关只影响下一条消息。</p>
+        <div class="chips"><span class="chip plan">每轮配置快照</span><span class="chip plain">线程隔离</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>web.py:640</em></div>
+      <div class="node core">
+        <div class="node-head"><span class="step">03</span><span class="node-title">SSE 事件循环</span><span class="file-tag">web.py:640 · _emit_agent_event() / 777 · _sse()</span></div>
+        <div class="fn">AgentEvent → SSE；approval → SSE approval；done → 结束；error → error_payload(exc) + done{ok:false}</div>
+        <p class="desc">前端只创建 DOM 节点、用 <code>textContent</code> 写入，不拼 innerHTML；响应会遮盖 <code>sk-...</code> 与内部字段。<code>error</code> 事件里带 <code>attempts / last_status / degraded</code>，用户能看到恢复摘要。</p>
+        <div class="chips"><span class="chip ok">SSE 流式</span><span class="chip bad">异常 → error + done</span><span class="chip degrade">含恢复摘要</span><span class="chip plain">断连 → cancel_approvals</span></div>
+      </div>
+      <div class="arrow"><span class="glyph">↓</span><em>会话与 trace</em></div>
+      <div class="node exit">
+        <div class="node-head"><span class="step">04</span><span class="node-title">结果落点</span><span class="file-tag">session.py / logging.py</span></div>
+        <div class="fn">消息追加到 sessions/&lt;id&gt;.jsonl；trace 追加到 logs/trace.jsonl；checkpoint 在 sessions/checkpoints/&lt;id&gt;.jsonl</div>
+        <p class="desc">CLI 与 Web 共用完全相同的落盘格式，因此可以互相 <code>--resume</code>、互相 <code>trace</code> 回放。</p>
+        <div class="chips"><span class="chip ok">可恢复</span><span class="chip plain">可回放</span></div>
+      </div>
+    </div>
+    <div class="note">
+      <b>两个入口的分工：</b>CLI 负责本地交互与脚本化单次执行；Web 只多了一层 HTTP/SSE 传输和按会话保存的开关，不改变 Agent 内部任何执行语义。
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="rule"></div>
+  依据 <code>d:\agent\miniagent\src\miniagent</code> 当前代码绘制 · 1 张总览 + 9 张工作流图 · 无外部 CDN 依赖，双击即可打开。
+</footer>
+
+</body>
+</html>

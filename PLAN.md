@@ -41,11 +41,13 @@
 | 会话与上下文管理 | JSONL 持久化、恢复、三级压缩（剪枝 / 结构化 / 摘要） | `session.py`、`context.py`、`compress.py`、`tests/test_session.py`、`tests/test_context.py`、`tests/test_compress.py` |
 | 并发 | 同轮多工具按路径依赖调度：读-读并发，读与写重叠降级串行；`run_shell` / 无 path 写整轮串行；再叠一层小模型依赖边，按拓扑层执行（路径边为硬约束） | `scheduling.py`、`dependencies.py`、`agent.py` 的 `_run_tools`、`tests/test_scheduling.py`、`tests/test_dependencies.py` |
 | 流式输出 | SSE 解析、文本增量渲染、中断安全 | `llm.py`、`cli.py`、`tests/test_streaming.py` |
+| 任务规划与校验 | 结构化计划 + 本地校验（工具/Schema/步数/前序引用）、一次修正后退回 ReAct、一步一评与重规划、收尾校验（原始意图 vs 实际证据） | `planner.py`、`agent.py` 的 `_run_plan` / `_execute_plan` / `_verify_plan`、`tests/test_plan.py` |
+| 人工确认（HITL） | 唯一拦截点 `registry.execute`；可配置确认规则、缺参补充后续跑、权限边界明确提示；CLI 交互等待、非交互直接失败、Web 弹窗闭环 | `hitl.py`、`tools/registry.py`、`cli.py`、`web.py`、`tests/test_hitl.py`、`tests/test_web.py` |
 | 错误处理与重试 | 错误分类、指数退避、429/5xx/超时、尊重 `Retry-After` | `reliability.py`、`llm.py`、`errors.py`、`tests/test_reliability.py` |
 | 限流与超时 | 请求超时 + 客户端令牌桶（单进程内实现） | `reliability.py`、`config.py` |
 | 可观测性 | 固定字段 JSONL trace、会话回放、不记录正文与密钥 | `logging.py`、`cli.py` 的 `trace_main`、`tests/test_logging.py` |
 | 安全边界 | 路径白名单、危险命令黑名单、写入大小上限 | `security.py`、`tools/builtin.py`、`tests/test_security.py` |
-| 记忆与人格 | soul.md 人格、事实/事件记忆、中文检索、攒批蒸馏、记忆门 | `soul.py`、`memory.py`、`tests/test_memory.py` |
+| 记忆与人格 | soul.md 人格、user.md 用户画像、长期记忆快照、事实/事件记忆、混合检索（subject/rel 过滤 + 向量余弦）、攒批蒸馏、记忆门 | `soul.py`、`memory.py`、`agent.py` 的 `default_system_prompt`、`tests/test_memory.py`、`tests/test_context_layers.py` |
 | 提示词注入防护 | 外部内容来源标注、可配置标注/拦截、记忆写入丢弃与注入复扫、命中进 trace | `guard.py`、`agent.py` 的 `_guard_context`、`tests/test_guard.py` |
 | 接口设计与模块边界 | `Tool` / `LLMProvider` 最小 Protocol、依赖单向、事件模型 | `tools/base.py`、`llm.py`、第 4 节 |
 | 测试与工程习惯 | MockProvider 离线测试、关键分支覆盖、ruff + CI | `tests/`、`.github/workflows/ci.yml` |
@@ -117,8 +119,10 @@
 
 - 消息列表（`system` / `user` / `assistant` / `tool`），每轮结束追加写入 `~/.miniagent/sessions/<id>.jsonl`。
 - 恢复：`--resume <id>` 或 `/resume`。
-- 上下文控制：字符近似估算 token；超阈值时按成本逐级压缩——规则剪枝（失效读取 / 重复结果 / 确认语 / 工具输出保头尾截断）→ 模板折叠工具调用 → 旧轮次滚动摘要；任一级达标即停，摘要失败退回硬裁，压缩链路写入 `trim` trace。
-- 长期记忆：M5 已实现文件式记忆（`memory.jsonl` + `memory.md`）、中文重叠二字窗口检索与记忆门；向量检索不做。
+- 上下文控制：字符近似估算 token；超 `max_context_tokens` 硬上限时按成本逐级压缩——规则剪枝（失效读取 / 重复结果 / 确认语 / 工具输出保头尾截断）→ 模板折叠工具调用 → 旧轮次滚动摘要；任一级达标即停，摘要失败退回硬裁，压缩链路写入 `trim` trace。
+- 短期窗口：压缩后再按 `short_term_tokens`（默认 2000，可 CLI / env / config 调整）整轮保留最近对话；system 与记忆注入不计入，至少保留最近一轮，tool_calls 与结果不拆；窗口快照写 `request` trace，裁剪另记 `trim`。
+- 长期记忆：M5 已实现文件式记忆（`memory.jsonl` + `memory.md`）与记忆门；M12 把检索改为纯向量通道（`embeddings.jsonl` + 硅基流动 `BAAI/bge-m3`，按余弦排序），关键词召回整条移除，没有向量能力时检索返回空结果。`memory.md` 是长期记忆的跨会话沉淀层：按 偏好/项目事实/待办/事件 分节合并，同文去重、同主体冲突取新、每条带可追溯 id，启动时作为快照放进 system prompt（超预算按同序优先级逐条保留，与每轮检索注入是两条路径，且不占短期窗口额度）；它不是短期记忆，短期记忆只指 `short_term_tokens` 裁剪出的请求窗口。
+- 用户画像：`user.md` 单独一层（`--user` > `./user.md` > `~/.miniagent/user.md`），只描述对话对象；`soul.md` 是 Agent 的人格与行为约束，两者不混用。
 
 #### D. 可插拔工具与接口
 
@@ -127,10 +131,11 @@
 | `name` | 唯一名，蛇形 |
 | `description` | 写清"何时用" |
 | `parameters` | JSON Schema（type / required / enum） |
-| `run(args)` | 返回字符串结果 |
+| `run(args)` | 返回字符串；需要写 trace 元数据时返回 `ToolOutput(text, detail, fail)` |
 
 - 注册：显式注册表（`registry.register`），不引入装饰器或热加载。
 - 内置三工具：`read_file`、`write_file`、`run_shell`；`run_shell` 执行前过危险命令黑名单。
+- 联网两工具：`web_search`（Tavily `/search`，key 走 `TAVILY_API_KEY` / `tavily_api_key`，缺失时调用期明确报错、不影响启动）与 `web_fetch`（HTML → 纯文本，标准库 `HTMLParser`）。两者只读，参与同轮只读并发；输出走注入标注与统一截断；trace 只记查询词、状态码、耗时、字节数。
 - 接口约束：`Tool` 与 `LLMProvider` 用 `typing.Protocol` 定义最小契约；工具实现不反向依赖 Agent。
 
 #### E. 可靠性（后端岗重点）
@@ -149,7 +154,8 @@
 
 #### G. 安全边界
 
-- 路径白名单：CLI 默认只允许当前工作目录，`--allow-dir` 可追加；`resolve` 后做目录包含校验。
+- 路径白名单：授权根 = 启动 cwd + `--allow-dir`（可重复）；`resolve` 后做目录包含校验。工作目录（`--workdir` / `MINIAGENT_WORKDIR` / config）只能在这之内选择，必须存在、是目录，否则启动/切换时明确报错；切换后相对路径、调度路径比较与 `run_shell` 的 cwd 同步跟随，但白名单范围不扩大。
+- 联网边界：只允许公网 http/https；DNS 全量解析后逐个校验 IP，连接校验过的 IP（保留 Host / SNI），重定向逐跳复检；拒绝回环、私网、链路本地、IPv6 本地与映射地址；超时、响应体积、重定向次数均有上限。
 - 危险命令黑名单：拦截递归删根/家目录、格式化、关机、下载即执行等模式。
 - 写入上限：单次 `write_file` 不超过 1 MiB；工具输出截断。
 - 不做容器级沙箱。
@@ -278,13 +284,15 @@ P0 = 缺了不能投；P1 = 低成本高收益；P2 = 时间富裕再做。
 | `agent.py` | 消息组装、循环、轮次上限、并发调度、事件分发、trace 埋点 | HTTP 细节、渲染 |
 | `scheduling.py` | 路径归一化、读写重叠判定、并发/串行计划 | 工具执行、模型调用 |
 | `dependencies.py` | 小模型依赖边判定、路径硬边合并、拓扑分层与降级 | 工具执行、渲染 |
+| `planner.py` | 计划结构、JSON 解析、本地校验、计划/评估提示词 | 工具执行、调度 |
+| `hitl.py` | 确认规则表、交互抽象、决策与等待时长记录 | 具体终端 / 浏览器实现 |
 | `llm.py` | `LLMProvider` Protocol、OpenAI 兼容实现、SSE 解析、重试与超时 | 会话、工具注册 |
 | `reliability.py` | 错误分类、令牌桶限流、指数退避策略 | HTTP 传输、会话 |
 | `tools/registry.py` | 注册表、Schema 导出、校验、执行包装、只读策略 | 具体工具逻辑 |
 | `tools/builtin.py` | `read_file` / `write_file` / `run_shell` 三个工具实现 | 跨工具协作 |
 | `security.py` | 路径白名单、危险命令黑名单 | 容器沙箱 |
 | `session.py` | Session/Message 模型、JSONL 读写、恢复 | 裁剪策略 |
-| `context.py` | token 估算、兜底硬裁 | 模型调用 |
+| `context.py` | token 估算、兜底硬裁、短期窗口裁剪 | 模型调用 |
 | `compress.py` | 三级压缩流水线：剪枝 / 结构化 / 摘要 | 模型调用、业务逻辑 |
 | `logging.py` | 固定字段 JSONL trace、会话回放数据源 | 业务逻辑、正文记录 |
 | `errors.py` | 四类异常 + 用户可读文案 + 退出码映射 | 恢复逻辑 |
@@ -293,8 +301,8 @@ P0 = 缺了不能投；P1 = 低成本高收益；P2 = 时间富裕再做。
 
 - **Message**：`{role, content, tool_calls?, tool_call_id?, name?}`。
 - **ToolCall**：`{id, name, arguments}`（arguments 保留原始字符串，校验后再解析）。
-- **ToolResult**：`{tool_call_id, content, is_error, duration_ms}`。
-- **AgentEvent**：`text` / `text_delta` / `text_end` / `tool_start` / `tool_end` / `context_trimmed` / `error`。
+- **ToolResult**：`{tool_call_id, content, is_error, duration_ms, hitl?}`。
+- **AgentEvent**：`text` / `text_delta` / `text_end` / `tool_start` / `tool_end` / `context_trimmed` / `hitl` / `error`。
 - **TraceRecord**：`{ts, session_id, turn, event, tool, duration_ms, prompt_tokens, completion_tokens, ok, error_code}`。
 
 ### 4.4 关键设计决策
@@ -319,6 +327,38 @@ P0 = 缺了不能投；P1 = 低成本高收益；P2 = 时间富裕再做。
 - **什么时候退化成全串行**：`off` 档；路径屏障（`run_shell` / 无 `path` 的写，跳过判定）；判定超时、请求异常、不可解析、索引越界、空回答；合并后成环；判定层内部异常。全部写入 `schedule` trace 的 `reason`，回放可核对。
 - **成本控制**：判定成功才缓存上一轮，参数摘要相同直接 `cache=hit`；失败不缓存，避免把一次故障固化。
 - **明确的安全取向**：判错成并行是**静默数据错误**，比慢严重；宁可整轮串行，也不赌模型判对。
+
+### 4.6 Plan-and-Execute 与计划校验
+
+默认仍是 ReAct，`plan_mode=on` 时才启用两段式：先产出结构化计划并本地校验，再逐步执行。
+
+- **两段式隔离**：计划阶段**不传 tools**，模型只能输出 `{"steps":[...]}`，每个步骤包含 `intent / tool / args / depends_on`；执行阶段每步只发起一个工具调用。
+- **校验是全有或全无**：工具名必须在注册表里；`args` 复用 `tools/registry.validate_args` 的 JSON Schema 校验；步骤数不超过上限（默认 8）；`depends_on` 只能引用序号更小的步骤；空 `steps`、非 JSON、缺字段、缺意图都拒绝。一步不合格就整份计划不执行，避免前两步产生副作用后才发现后面无法执行。
+- **失败策略：一次修正 + 退回 ReAct**。首次校验失败把错误清单回喂模型改一次；仍不合法就放弃计划、用同一次任务走 ReAct。理由是格式类失败再重试收敛概率低，而 ReAct 是既有能力，继续纠错只会多花调用、拖长时延；退回路径写 `plan_fallback` trace。
+- **执行顺序即依赖**：计划步严格串行，每步走 `_run_tools([单调用])`——路径重叠/依赖分层的"同层并发"在计划模式内退化为单层，这是刻意的边界：计划顺序本身就是串行约束，不需要也不应该并行。需要同轮并发时走 ReAct。
+- **一步一评**：每步结果回喂后一次评估调用，可 `continue` / `replan`（同样过校验，默认最多 2 次，超限忽略并继续原计划）/ `finish` 提前结束；评估不可解析按"继续原计划"处理，不会卡死。全部步骤失败时仍返回失败（退出码 1）。
+- **复用既有能力**：计划/评估请求同样过三级压缩、记忆提示注入与注入防护；工具输出继续走 `prompt_guard` 标注；记忆蒸馏只在成功收尾时触发。
+- **收尾校验（`plan_verify`，默认 `off`）**：全部计划步骤执行完、返回用户前，再判断一次"原始用户意图 vs 累计工具实际状态"。
+  - 校验输出 `verdict / reason / evidence`；判 `pass` 的每条证据必须能在工具实际返回（状态与输出）里逐字找到，证据为空判 `evidence_missing`、对不上判 `evidence_ungrounded`，均按不通过处理；计划文本与工具参数不算证据。
+  - 不通过给**一轮**补充执行（同一个 Provider、同一个 `_run_tools`，不另开循环），补充后再校验一次；仍不通过就停止，返回"未达成原因 + 已执行清单"，`ok=False`，不写记忆。轮次上限由 `plan_verify_rounds` 控制（默认 1，0 表示不补）。
+  - 校验调用异常（`ProviderError`、超时或任何异常）标记 `unavailable`，直接按失败返回且**不做补充执行**：无法判定结果时不再产生无人核对的新副作用。不可解析/证据不足仍允许补充复校。
+  - 默认关闭时零额外调用；`plan_verify` trace 记录 `phase=verify|supplement`、`verdict`、`evidence` 数量与原因，`run_end` 汇总 `verify=pass|fail|unavailable|skipped supplements=N`。
+
+### 4.7 Human-in-the-loop（HITL）
+
+默认 `hitl=off`；开启后拦截只挂在 `ToolRegistry.execute` 这**唯一工具入口**，ReAct 与 Plan-and-Execute（含收尾校验的补充执行）自动共用，不各写一套。
+
+- **规则可配置，不写死条件**：内置规则 `overwrite`（写已存在文件）、`mutate`（非只读工具）、`delete`（`rm/del/rmdir/remove-item` 等命令），默认三条全开；`hitl_confirm` / `--hitl-confirm` 可选择只保留其中一部分，空表示只保留补参数与权限提示。规则判定统一在 `hitl.classify`。
+- **三类情况**：
+  1. **危险操作确认**：命中规则先问用户；允许后执行，拒绝则不执行。
+  2. **信息不足**：参数校验缺必填字符串时向用户提问，拿到值后重新校验并继续**同一个**工具调用；空输入/拒绝按失败回喂模型，不猜参数。
+  3. **权限硬边界**：工具提供 `precheck`，在确认前先过路径白名单 / 危险命令黑名单；命中直接返回 `权限边界拦截：...；需要放行：...`，避免先问用户再失败。
+- **三种交互模式**：
+  - CLI REPL：`input()` 阻塞等待，**不设超时、不自动判拒**；Ctrl+C 正常中断。
+  - CLI `-p` / 非 TTY：不等待，直接 `deny`，原因固定为"该操作需要确认，请在交互模式下运行"，错误文本回喂模型，退出码沿用现有语义。
+  - Web：SSE 推 `approval` 事件，Agent 工作线程在 `threading.Event` 上无超时等待，`POST /api/sessions/{id}/approvals/{id}` 回填后继续同一次调用；页面关闭时 SSE 心跳写失败 → 连接循环退出 → `cancel_approvals` 唤醒等待线程并按拒绝结束，不留下悬着的线程。
+- **拒绝后的行为**：`ToolResult` 带 `HITL 拦截：用户拒绝执行... 不要原样重试...`，ReAct 继续下一轮，计划模式照常进入步骤评估，模型可换方案，整轮不因一次拒绝直接失败。
+- **可观测**：新增 `hitl` trace，`detail` 与 `plan` / `schedule` / `plan_verify` 同风格：`mode=hitl phase=confirm|missing|permission tool=... risk=... reason=... decision=allow|deny|blocked wait_ms=... handler=cli|web|noninteractive`。
 
 ---
 
@@ -381,6 +421,7 @@ miniagent/
 │   ├── cli.py
 │   ├── agent.py
 │   ├── dependencies.py
+│   ├── planner.py
 │   ├── llm.py
 │   ├── reliability.py
 │   ├── config.py
@@ -400,6 +441,7 @@ miniagent/
     ├── test_cli.py
     ├── test_context.py
     ├── test_dependencies.py
+    ├── test_plan.py
     ├── test_logging.py
     ├── test_reliability.py
     ├── test_security.py
@@ -468,14 +510,111 @@ miniagent/
 
 ### M5：记忆与人格 — P0 ｜ 2 天（已完成，Mock 验收）
 
-- **内容**：`soul.md` 人格文件（显式 > 项目 > 用户 > 默认）；事实/事件两类记忆写入 `memory.jsonl`，自动渲染 `memory.md`；攒批蒸馏（失败保留 pending）；重叠二字窗口中文检索；每轮一次记忆门判定，失败倾向放行，结果进 trace。
+- **内容**：system prompt 三层组装——`soul.md` 人格与行为约束、`user.md` 用户画像、`memory.md` 长期记忆快照（按 偏好/项目事实/待办/事件 分节合并的跨会话沉淀层），顺序固定且空层省略；事实/事件两类记忆写入 `memory.jsonl`，自动渲染 `memory.md`（长期记忆的人类可读视图，不是短期记忆）；攒批蒸馏（失败保留 pending）；检索走向量通道（`embeddings.jsonl` + `BAAI/bge-m3` 余弦排序）；每轮一次记忆门判定，失败倾向放行，结果进 trace；快照与检索注入各自做注入扫描。
 - **提示词注入防护**：三处外部内容区别对待——用户输入不拦不改；工具输出默认用 `<<<外部数据 ...>>>` 标注并在命中规则时提示，`block` 模式整段替换；记忆在蒸馏写入时丢弃命中条目、注入前再扫一次。规则只作补充，不引入额外模型审核调用。命中统一进 `prompt_guard` trace。
 - **可验证产出**：
-  - 中文事实 → 中文提问可检索（先红后绿的测试）；
+  - 中文事实 → 中文提问可检索（MockTransport 固定向量，先红后绿的测试）；
   - Mock 脚本确定性覆盖门的两条分支与解析失败、请求失败；
   - 攒批未满不调模型，蒸馏失败 pending 不丢；
   - 正常中文不误报、典型注入被识别、工具输出标注/拦截、用户输入不被改写、记忆注入不回流；
-  - 原有 83 个测试不退化（当前 152 个用例全绿，1 个符号链接用例在受限环境跳过）。
+  - 原有 83 个测试不退化（当前 192 个用例全绿，1 个符号链接用例在受限环境跳过）。
+
+### M6：Plan-and-Execute — P1 ｜ 1.5–2 天（已完成，Mock 验收）
+
+- **内容**：`plan_mode=on` 先出结构化计划（意图 + 工具 + 参数 + 前序依赖），本地校验通过后逐步执行，每步结果回喂后决定继续 / 重规划 / 收尾；可选收尾校验 `plan_verify=on` 在执行完、返回前核对原始意图与实际证据。
+- **开关**：`--plan-mode off|on` + `MINIAGENT_PLAN_MODE` + `plan_mode`，默认 `off`；关闭时零额外模型调用。`--plan-verify off|on` 默认 `off`，同样零额外调用；只在计划模式内生效。
+- **可验证产出**：
+  - 校验覆盖空计划、非 JSON、超步数、未知工具、参数 Schema、非法前序引用；
+  - 校验失败重试一次，两次失败退回 ReAct，`plan_fallback` 可回放；
+  - 逐步执行、提前结束、重规划与次数上限、评估不可解析继续原计划、全部步骤失败返回失败；
+  - 收尾校验覆盖通过、证据为空/不落地判不通过、补充后通过、补充后仍不通过如实返回失败、校验调用异常不静默通过、补充轮次上限；
+  - 计划事件 `plan / plan_step / plan_review / plan_fallback / plan_verify` 与 `schedule` 同样的 `key=value` 风格；
+  - 原有测试不退化（当前 192 个用例全绿，1 个跳过）。
+
+### M7：Human-in-the-loop — P1 ｜ 1–1.5 天（已完成，Mock 验收）
+
+- **内容**：在 `registry.execute` 唯一入口加人工拦截，覆盖危险操作确认、缺参补充后续跑、权限硬边界提示；CLI / `-p` / Web 三种交互模式语义一致。
+- **开关**：`--hitl off|on` + `MINIAGENT_HITL` + `hitl`，默认 `off`（零额外调用、不弹任何提示）。确认规则用 `--hitl-confirm` / `MINIAGENT_HITL_CONFIRM` 配置，默认 `overwrite,mutate,delete`。
+- **交互口径**：交互式（CLI REPL、Web）一直等用户回答，不设超时、不自动判拒；非交互（`-p`、非 TTY）不等待，直接失败并提示"该操作需要确认，请在交互模式下运行"；网页关闭时取消挂起请求并按拒绝结束。
+- **可验证产出**：
+  - 确认通过 / 拒绝 / 交互式等待不自动超时 / 非交互直接失败且模型继续；
+  - 缺少参数补充后继续同一个工具调用、补充被拒；
+  - 路径白名单与危险命令拦截给出"被什么拦住 + 需要放行什么"；
+  - 网页端 `approval` 事件 + 决策 POST 闭环、页面关闭取消、409/400 边界；
+  - 与计划模式叠加共用同一拦截点，`hitl` trace 字段可回放；
+  - 原有测试不退化（当前 215 个用例全绿，1 个跳过）。
+
+### M8：联网工具与会话工作目录 — P1 ｜ 1–1.5 天（已完成，Mock 验收）
+
+- **内容**：新增只读 `web_search`（Tavily）与 `web_fetch`；工作目录支持默认值、命令行 / config 覆盖、网页端会话级切换与持久化。
+- **依赖**：运行时仍只有 `httpx`；HTML 转文本用标准库，不引入 bs4/lxml 或搜索 SDK。
+- **开关与配置**：`TAVILY_API_KEY` / `tavily_api_key`（缺失只影响调用，不影响启动）；`--workdir` / `MINIAGENT_WORKDIR` / `workdir`（默认启动 cwd）。
+- **可验证产出**：
+  - 搜索正常解析、key 缺失明确提示、超时、非 2xx、后端解析到内网被拒；
+  - 抓取超时 / 超大响应截断 / 非 2xx / 内网与映射地址拒绝 / 重定向超限与跳内网被拒；
+  - 外部内容标注来源并走注入防护，trace 只记元数据；
+  - 只读工具不触发 HITL，两个抓取以及搜索 + 抓取均可并发；
+  - 工作目录默认值、会话级覆盖与持久化、越权 / 不存在 / 是文件被拒（400 说明如何授权）、切换后相对路径解析与调度比较跟随；
+  - 原有测试不退化（当前 259 个用例全绿，1 个跳过）。
+
+### M9：短期对话窗口 — P1 ｜ 0.5–1 天（已完成，Mock 验收）
+
+- **内容**：新增 `short_term_tokens`（默认 2000，`--short-term-tokens` / `MINIAGENT_SHORT_TERM_TOKENS` / `short_term_tokens`），只约束每轮请求的最近对话历史。
+- **与硬上限分工**：`max_context_tokens` 仍是硬上限，三级压缩按原规则先触发；短期窗口在压缩后执行，调小窗口不改变压缩阈值，调大窗口不能突破硬上限。
+- **边界**：以 user 轮次整轮裁剪，`tool_calls` 与对应 tool 结果不拆；至少保留最近一轮；system 与长期记忆注入不计入预算。
+- **可观测**：`request` trace 的 `detail` 带 `stage=short_term budget=... from=... to=... messages=... turns=... trimmed=0|1`；真正裁剪时另记 `trim` 与 `context_trimmed` 事件。
+- **测试**：窗口内不裁、超窗口裁到预算内、不拆 tool_calls、最近一轮超预算仍保留、记忆注入不计入、非法参数报错、trace 字段；原有测试不退化（当前 259 个用例全绿，1 个跳过）。
+
+### M10：工具调用 checkpoint — P1 ｜ 1 天（已完成，Mock 验收）
+
+- **内容**：每个工具调用执行前追加 `start`（轮次、调用 ID、工具名、参数指纹、重放策略），执行后追加 `end`（状态、耗时、错误码、结果摘要）；文件位于 `sessions/checkpoints/<session_id>.jsonl`，与消息 JSONL 分离，不重复存正文。
+- **恢复语义**：`--resume` / `/resume` 时先修复半截状态——只读未完成直接重跑；写工具按幂等键判定，能确认已生效就补"已完成"，否则补"状态未知"且不重试；完成记录存在但 tool 消息缺失时用摘要补齐，不重复执行。
+- **幂等标注**：策略落在工具类上——`write_file` 为 `idempotent`（路径 + 内容摘要，恢复时比对文件内容），`run_shell` 显式为 `never`，其余非只读工具默认 `never`，只读工具推导为 `safe`。
+- **格式兼容**：记录带 `v=1`；未知版本、坏行、未知记录类型都报错并带行号，不静默跳过。
+- **与既有语义的关系**：会话 JSONL 仍是正文唯一来源，trace 仍是只读日志；HITL 的 `start` 写在确认之后，确认前不执行也不留记录。
+- **可观测**：`checkpoint`（begin / end / resolve）与 `checkpoint_recover`（rerun / completed / idempotent / unknown / message_present）事件进现有 trace。
+- **开销**：每次工具调用多两次 checkpoint 追加与两次 checkpoint trace 追加（本机实测合计约 1.4ms），无额外模型调用；无会话时零写入。
+- **测试**：半截 start 的只读重跑、写工具标记未知、幂等已生效判定、完成但消息缺失补齐、无记录悬空 tool_call 兜底、版本不兼容与坏行报行号、HITL 拒绝不留 start、工具异常仍有 error end、正常路径无额外模型调用；原有测试不退化（当前 289 个用例全绿，1 个跳过）。
+
+### M11：高危操作 git 快照与回滚 — P1 ｜ 1 天（已完成，git 实测）
+
+- **触发范围**：非只读工具（`write_file` 覆盖写、`run_shell` 等）；只读工具不拍快照、不调用 git。
+- **零污染机制**：`git stash create` 只创建游离 commit 对象并返回 sha，不写 ref、不改 HEAD / 暂存区 / 工作区；工作区干净时退化为记录 HEAD。不自动 `git init`。
+- **顺序与失败策略**：快照在 HITL 确认之后、工具执行之前；git 报错或超过 30s 超时则拒绝执行该高危操作，不带着无保护状态继续。
+- **降级**：非 git 目录 / 仓库无提交时只写 `snapshot_kind=unavailable` 并提示"无法回滚"，操作照常执行；理由是快照是额外安全网，不应让默认开关把非 git 目录的正常写入全部拦掉。
+- **回滚入口**：`miniagent rollback <session_id> [--to <seq>] [--force]`；工作区有未提交改动（含未跟踪文件）时默认拒绝，必须 `--force`；恢复用 `git restore --worktree`，不动暂存区与 HEAD。
+- **开关**：`--snapshot on|off`、`MINIAGENT_SNAPSHOT`、`config.toml` 的 `snapshot`，默认 `on`。关闭后零 git 调用、不写快照字段，工具级 checkpoint 恢复不受影响。
+- **已知限制**：未跟踪与 `.gitignore` 忽略的文件不在快照里；回滚不恢复也不删除它们；`run_shell` 的仓库外副作用管不到。
+- **实测**（Windows 本机，stash create + rev-parse）：1000 个跟踪文件 / 50 个改动约 290ms、新增约 4KiB；5000 / 100 约 900ms、约 14KiB；工作区干净约 180ms、不新增对象。不做按仓库大小的静默跳过，只保留 30s 超时作为硬上限。
+- **测试**：高危触发且仓库零污染、只读不触发、非 git 降级、快照失败拒绝、回滚最新/指定 seq、未提交改动保护、未跟踪文件不在快照内、开关关闭零行为；当前 289 个用例全绿，1 个跳过。
+
+### M12：记忆向量检索 — P1 ｜ 1 天（已完成，真实接口评测）
+
+- **范围**：记忆检索只保留 embedding 通道，关键词召回（CJK 二字窗口、英文整词、覆盖率排序）整条移除；`MemoryStore.search` 只按余弦相似度降序取 `top_k`。
+- **独立配置**：`embedding_base_url`（默认 `https://api.siliconflow.cn/v1`）、`embedding_model`（默认 `BAAI/bge-m3`）、`embedding_api_key`（`SILICONFLOW_API_KEY` 优先）与主对话 provider 完全分开；没有 key 或 `--mock` 时关闭向量通道、检索返回空，并在进程内提示一次。
+- **索引**：`embeddings.jsonl` 与 `memory.jsonl` 分开，每条记录带 `model` 与 `dim`；模型名不一致、记录维度不一致或查询向量维度不一致时整份重建。蒸馏产出新条目时批量向量化，检索只嵌入查询一条。
+- **失败策略**：超时 5s（可配），超时/网络/429/5xx 只重试一次；仍失败或 4xx 就返回空结果，写 `memory_embedding` trace（含 `degraded` 与 `reason`），不抛异常，不影响写入与蒸馏。纯 Python 余弦，不引入 numpy/faiss。
+- **memory.md 沉淀**：蒸馏写入时按 偏好/项目事实/待办/事件 分节合并；规范化文本相同只留一条，同一主体（`X是Y` / `X为Y`）冲突取新，每条带 `memory.jsonl` id 前 8 位；渲染始终基于全量条目，临时文件 + `os.replace` 原子替换；写失败只记 `memory_write` trace 并留待下次写入重试；快照超预算按同序优先级逐条保留，低优先级条目先省略。
+- **实测**（32 条记忆 / 30 条中英混合查询，真实接口）：维度 1024；32 条批量 619ms；单查询平均 264ms、P50 257ms、最大 591ms；索引 731,772 字节。recall@3 与 recall@5 均为 1.00（纯向量）。
+- **测试**：MockTransport 覆盖纯余弦排序、无语义能力返回空、模型/维度重建、超时与 4xx 返回空并记 trace、蒸馏写入即向量化、缺 key 提示、mock 不启用；该阶段结束 325 个用例通过，1 个跳过。
+
+### M13：故障恢复三项增强 — P1 ｜ 已完成
+
+- **注入前轨迹体检**：`context.repair_pairing()` 统一配对规则，`recover_checkpoint` 与 `_build_context` 共用。补齐缺失的 tool 结果（占位标注是补的）、丢弃无名字的 `tool_calls` 与孤儿结果；返回新列表、不改原轨迹，幂等；修复时写 `pairing` trace。
+- **恢复摘要**：`errors.RecoverySummary` 记录尝试次数、最后状态码/错误类型与降级动作；`llm._with_retry` 填写请求侧，`Agent._attach_recovery` 合并本轮降级（记忆门放行、摘要退硬裁、依赖判定退串行、收尾校验不可用、流式降级非流式）。CLI 多打一行 `[recovery]`，Web `error` 事件新增 `attempts / last_status / last_error / degraded / recovery`；无恢复信息时输出与 trace 字段保持兼容。
+- **无进展循环检测**：`(工具名, 归一化参数, 结果)` 的 sha256 指纹，连续 `no_progress_repeat`（默认 3）次相同先回填换策略提示，再相同一次终止并返回 `error_code=no_progress`；`max_turns` 仍是最终兜底。开关与阈值走 `config.toml` / `MINIAGENT_NO_PROGRESS(_REPEAT)` / `--no-progress(--repeat)`，默认开启。
+- **测试**：`tests/test_pairing.py`（5）、`tests/test_recovery_summary.py`（7）、`tests/test_no_progress.py`（6）；该阶段结束 325 个用例通过，1 个跳过。
+
+### M14：记忆混合检索（卡片 + 消歧评测）— P1 ｜ 已完成
+
+- **先评测后改结构**：新增 `tests/data/memory_disambiguation.json`（29 条记忆 / 28 条查询），覆盖同名不同人、同主体多事实拼合、关系推理、无歧义反例；同名条目写成近似文本，区别只在 `subject` / `rel`，用来暴露纯余弦在"同名人"上的排序问题。同一份评测集上先测基线（`subject_filter` 置为恒等函数，等价于改造前纯余弦），再测混合。
+- **字段**：`MemoryEntry` 增加可选 `subject`（说的是谁）/ `rel`（与用户的关系：本人 / 家人 / 同事 / 朋友）/ `backstory`（一句话来源）；缺失一律按空字符串处理，旧条目不用迁移，空字段不落盘。条目 key 仍只由 `kind + text + created_at` 决定，字段变更不触发 `embeddings.jsonl` 重建。
+- **蒸馏**：prompt 增加三个字段与"填不出就留空、不许编造"；偏好与人物关系类尽量填，事件类可留空。`memory.md` 卡片条目渲染成 `- [id] 张医生｜家人｜…`，没有卡片字段的流水条目保持原格式。
+- **检索**：`MemoryStore.search` 先调 `subject_filter` 做本地关键词识别（命中 rel 词表或点名 subject 时收窄候选），再对候选算余弦；不足 `top_k` 时放开过滤补足，过滤命中项优先，任何情况下不会"过滤一轮直接返回空"。识别不到主体/关系时与改造前完全一致。命中 `subject` 时若同时出现"我/公司"这类兜底词，只保留 subject 过滤；"我的/我家"这类所有格才叠加 rel。
+- **trace**：`memory_embedding` 新增 `filtered=0/1`、`filter=subject=…,rel=…`、`filled=N`。
+- **评测**（`tools/memory_eval.py`，`--check` 按当前向量后端校验固化数字）：真实 `BAAI/bge-m3`（SiliconFlow `/embeddings`，key 只走 `SILICONFLOW_API_KEY`）基线 recall@3 1.000 / recall@5 1.000 / 消歧正确率 0.926，混合 1.000 / 1.000 / 0.963；同名不同人子集 0.800 → 0.900，仍错的 q03 是查询只说关系、没点名"李老师"，属 subject 别名缺失。离线 `offline-char-bigram-1024` 基线 1.000 / 1.000 / 0.852、混合 1.000 / 1.000 / 0.963，仅作无网络复现对照，跨后端数字不可直接比较。
+- **真实调用数据**：29 条记忆一次批量 + 28 条查询逐条，共 29 次请求 / 57 条文本；记忆批量 0.62–0.78s，查询合计 7.58–8.07s（平均 271–290ms，最大 487–578ms）；`embeddings.jsonl` 663,551 字节（dim=1024）。两次干净复跑数字一致。首次运行出现一次 q17 查询嵌入瞬时失败，检索按设计返回空（基线 recall 记为 0.964）；评测脚本会打印每次调用失败，不用离线结果顶替。
+- **测试**：`tests/test_memory_hybrid.py`（10）、`tests/test_memory_eval.py`（3）；当前 339 个用例通过，1 个跳过。
 
 ### M5+：可选增强（不进主线）— P2 ｜ 每项 1–3 天
 
@@ -516,7 +655,7 @@ miniagent/
 | 重试放大副作用 | 高：重复写文件/重复执行命令 | 只重试模型请求；工具不自动重试，重试由模型决策并记录日志 |
 | 可观测性做成"大而全" | 中：耗时且无增量价值 | 只做固定字段日志 + trace 回放；不上采集、不上大盘 |
 | 流式与工具调用混合出错 | 中：隐性 bug | 文本流式、工具调用整块处理；流式失败降级一次 |
-| 上下文裁剪导致"忘事" | 中：体验下降 | 保留 system + 最近 N 轮 + 工具输出截断；摘要留 P2 |
+| 上下文裁剪导致"忘事" | 中：体验下降 | 保留 system + 最近 N 轮 + 工具输出截断；短期窗口默认 2000 token，超出部分只能靠长期记忆找回，README 明示此代价 |
 | 工具执行破坏性 | 高：真实损失 | 路径白名单 + 命令黑名单 + 输出/写入上限；README 明示边界；不做容器沙箱 |
 | 密钥泄露 | 高 | 只从 env/本地配置读；日志脱敏；`.gitignore` 覆盖配置与会话 |
 | Demo 依赖真实 API（面试官跑不起来） | 高：项目不可复现 | Mock 离线模式为默认演示路径；真实模型待密钥后补跑 |
